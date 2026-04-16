@@ -1,0 +1,75 @@
+# ---------------------------------------------------------------------------
+# Base configuration -- shared across train/serve/agent.
+# Override via env vars (FRAUD_* prefix) or dedicated YAMLs in configs/.
+# ---------------------------------------------------------------------------
+project:
+  name: fraud-detection-gnn
+  version: "0.1.0"
+  seed: 42
+
+paths:
+  # All paths are relative to the project root unless absolute.
+  data_raw: data/raw
+  data_processed: data/processed
+  data_splits: data/splits
+  data_graphs: data/graphs
+
+dataset:
+  # IEEE-CIS Fraud Detection
+  slug: ieee-fraud-detection
+  transaction_file: train_transaction.csv
+  identity_file: train_identity.csv
+  test_transaction_file: test_transaction.csv
+  test_identity_file: test_identity.csv
+  join_key: TransactionID
+  target: isFraud
+  time_column: TransactionDT
+  # Local development uses a subset for speed on CPU
+  use_subset: false
+  subset_size: 200_000
+
+preprocessing:
+  # Missing-value strategy per feature group (see plan, page 4)
+  missing_strategy:
+    v_features:
+      drop_threshold: 0.75   # drop V-columns with >75% missing
+      fill_value: -999
+      add_indicator: true
+    d_features:
+      fill_value: -1
+      add_indicator: true
+    c_features:
+      fill_value: 0
+      add_indicator: false
+    m_features:
+      fill_value: "missing"
+      add_indicator: false
+    id_numeric:
+      fill_value: -999
+      add_indicator: true
+    id_categorical:
+      fill_value: "unknown"
+      add_indicator: false
+    email_domains:
+      fill_value: "unknown"
+      add_indicator: false
+  # Numeric normalization
+  normalize: standard    # one of: standard | robust | none
+  clip_quantile: 0.999   # clip amount outliers at 99.9th percentile
+  log_amount: true       # add log1p(TransactionAmt)
+
+splits:
+  strategy: temporal
+  train_frac: 0.60
+  val_frac: 0.20
+  test_frac: 0.20
+  # No overlap; ordered by time_column.
+  shuffle: false
+  assert_non_overlap: true
+
+logging:
+  level: INFO
+  json: true
+  # Extra context included on every record
+  static_context:
+    project: fraud-detection-gnn

@@ -1,0 +1,96 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build / dist
+build/
+dist/
+*.manifest
+*.spec
+.eggs/
+
+# IDE / editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# Data (per implementation plan: all data/ is gitignored)
+data/raw/
+data/processed/
+data/graphs/
+data/splits/
+!data/.gitkeep
+!data/*/.gitkeep
+
+# Model artifacts
+mlruns/
+mlartifacts/
+*.pt
+*.pth
+*.pkl
+*.joblib
+*.onnx
+
+# Feast
+feature_repo/
+.feast/
+online_store.db
+registry.db
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+kaggle.json
+
+# Logs
+logs/
+*.log
+
+# Docker
+.docker/
+
+# Node (for dashboard)
+node_modules/
+dashboard/dist/
+dashboard/.vite/
+
+# OS
+desktop.ini
+
+# Large artifacts that shouldn't be tracked
+*.parquet
+*.feather
+*.h5
+*.hdf5
+!tests/**/fixtures/*.parquet

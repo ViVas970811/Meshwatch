@@ -1,0 +1,208 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fraud-detection-gnn"
+version = "0.1.0"
+description = "Real-time transaction fraud detection using heterogeneous GNNs + agentic LLM investigation."
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "MIT" }
+authors = [
+    { name = "Vivek Vasisht" },
+]
+keywords = ["fraud-detection", "gnn", "pytorch-geometric", "langgraph", "mlops"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    # Core data stack (Phase 1)
+    "numpy>=1.26,<2.3",
+    "pandas>=2.1,<3.0",
+    "pyarrow>=15.0",
+    "scikit-learn>=1.4,<2.0",
+    "scipy>=1.11",
+    # Config + validation
+    "pydantic>=2.10.6,<3.0",
+    "pydantic-settings>=2.6",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    # Logging
+    "structlog>=24.4",
+    # Data download
+    "kaggle>=1.6",
+    # CLI
+    "click>=8.1",
+    # Progress / utilities
+    "tqdm>=4.66",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.14",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pre-commit>=3.8",
+    "ipykernel>=6.29",
+    "jupyter>=1.1",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "plotly>=5.24",
+]
+
+train = [
+    # Phase 2/3 (stubbed here so `pip install -e .[train]` is forward-compatible)
+    "torch>=2.10,<2.11",
+    "torch-geometric>=2.5",
+    "xgboost>=2.1",
+    "networkx>=3.4.2",
+    "mlflow>=2.16",
+    "feast>=0.40",
+    "optuna>=4.0",
+]
+
+serve = [
+    # Phase 4
+    "fastapi>=0.115.6",
+    "uvicorn[standard]>=0.32",
+    "ray[serve]>=2.37",
+    "redis>=5.2.1",
+    "confluent-kafka>=2.5",
+    "shap>=0.46",
+    "prometheus-client>=0.21",
+]
+
+agent = [
+    # Phase 5
+    "langgraph>=0.2.60",
+    "langchain>=0.3.18",
+    "langchain-ollama>=0.2",
+    "langchain-community>=0.3",
+    "langfuse>=2.52",
+    "faiss-cpu>=1.8",
+    "neo4j>=5.26",
+]
+
+monitor = [
+    # Phase 7
+    "evidently>=0.5",
+    "prometheus-client>=0.21",
+]
+
+all = [
+    "fraud-detection-gnn[dev,train,serve,agent,monitor]",
+]
+
+[project.scripts]
+fraud-download = "fraud_detection.data.download:main"
+
+[project.urls]
+Repository = "https://github.com/ViVas970811/fraud-detection-gnn"
+
+# ---------------------------------------------------------------------------
+# Hatchling
+# ---------------------------------------------------------------------------
+[tool.hatch.build.targets.wheel]
+packages = ["src/fraud_detection"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/fraud_detection",
+    "configs",
+    "scripts",
+    "README.md",
+    "pyproject.toml",
+]
+
+# ---------------------------------------------------------------------------
+# Ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # flake8-bugbear
+    "UP",       # pyupgrade
+    "SIM",      # flake8-simplify
+    "N",        # pep8-naming
+    "C4",       # flake8-comprehensions
+    "RUF",
+]
+ignore = [
+    "E501",  # line length handled by formatter
+    "N803",  # allow uppercase arg names (DataFrame convention)
+    "N806",  # allow uppercase vars in functions (X, y)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["N802"]  # allow test_ method names
+"notebooks/**" = ["E402", "F401"]
+
+# ---------------------------------------------------------------------------
+# Pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+]
+markers = [
+    "unit: fast, isolated unit tests",
+    "integration: tests that require docker services",
+    "e2e: end-to-end tests",
+    "slow: tests taking more than a few seconds",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning:google.*",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["src/fraud_detection"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__init__.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
+show_missing = true
+skip_covered = false
+
+# ---------------------------------------------------------------------------
+# Mypy
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.10"
+strict = false
+warn_unused_ignores = true
+warn_redundant_casts = true
+ignore_missing_imports = true
