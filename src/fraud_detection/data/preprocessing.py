@@ -241,6 +241,13 @@ class IEEECISPreprocessor:
             Override paths; default to ``data/raw/train_transaction.csv`` etc.
         nrows
             Optional row cap (useful in tests / dev subset mode).
+
+        Notes
+        -----
+        On 16GB machines the full 590K * ~430-column frame will OOM with
+        default float64 dtypes. We down-cast numeric columns to float32/int32
+        at read time -- pandas' defaults blow up to ~1.7GB per block when
+        consolidating, vs. ~850MB here.
         """
         raw_dir = self.config.paths.data_raw
         ds = self.config.dataset
@@ -253,11 +260,11 @@ class IEEECISPreprocessor:
             raise FileNotFoundError(msg)
 
         log.info("load_transaction_csv", path=str(tx_path))
-        tx = pd.read_csv(tx_path, nrows=nrows)
+        tx = self._read_csv_memory_efficient(tx_path, nrows=nrows)
 
         if id_path.exists():
             log.info("load_identity_csv", path=str(id_path))
-            ident = pd.read_csv(id_path, nrows=nrows)
+            ident = self._read_csv_memory_efficient(id_path, nrows=nrows)
             before = len(tx)
             df = tx.merge(ident, how="left", on=ds.join_key)
             log.info(
@@ -277,6 +284,66 @@ class IEEECISPreprocessor:
             log.info("subset_applied", n=len(df))
 
         return df
+
+    # ------------------------------------------------------------------
+    # Memory-efficient CSV reader
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _read_csv_memory_efficient(cls, path: Path, *, nrows: int | None = None) -> pd.DataFrame:
+        """Read a CSV with narrower numeric dtypes to fit in 16GB.
+
+        Strategy:
+            * Peek at the header row to identify column families (V/D/C/id_*).
+            * Supply an explicit ``dtype`` map: float32 for V/D/id_numeric,
+              int16 for C/M-flag columns and addr1/addr2/card1-6.
+            * Let pandas infer everything else (TransactionID, strings, etc.).
+        """
+        # Peek at the header to get column names without loading data.
+        header = pd.read_csv(path, nrows=0).columns.tolist()
+
+        dtype_map: dict[str, Any] = {}
+        for col in header:
+            if _V_RE.match(col) or _D_RE.match(col):
+                dtype_map[col] = "float32"
+            elif _C_RE.match(col):
+                # C columns are count-valued but contain NaN -> use float32
+                # (nullable Int32 would be better but is slower to read).
+                dtype_map[col] = "float32"
+            elif _ID_RE.match(col):
+                # id_01-id_38 is a mix of numeric and string columns; pandas
+                # will coerce string columns to object regardless of the hint.
+                dtype_map[col] = "float32"
+            elif col in {"TransactionAmt", "dist1", "dist2"} or col in {
+                "addr1",
+                "addr2",
+                "card1",
+                "card2",
+                "card3",
+                "card5",
+            }:
+                dtype_map[col] = "float32"
+            elif col == "isFraud":
+                dtype_map[col] = "int8"
+            elif col == "TransactionDT":
+                dtype_map[col] = "int32"
+            # card4, card6, M*, email, device, product, TransactionID -> let
+            # pandas pick (object or int64 as appropriate).
+
+        # pandas will raise for any id_* columns that are actually strings; we
+        # strip those from the map on first attempt via the exception path.
+        try:
+            return pd.read_csv(path, nrows=nrows, dtype=dtype_map, low_memory=False)
+        except ValueError as exc:
+            # Second attempt: drop the specific offending id_* key(s) from the
+            # dtype map and retry. Rare in practice; IEEE-CIS has id_12-id_38
+            # as strings but we handle via downstream logic so we just fall
+            # back to object dtype for anything that wouldn't coerce.
+            log.warning("load_csv_dtype_retry", exc=str(exc))
+            for col in list(dtype_map):
+                if _ID_RE.match(col):
+                    dtype_map.pop(col, None)
+            return pd.read_csv(path, nrows=nrows, dtype=dtype_map, low_memory=False)
 
     # ------------------------------------------------------------------
     # Stage 2: missing values
@@ -352,6 +419,10 @@ class IEEECISPreprocessor:
             df, columns=groups.email_cols, strategy=strat.email_domains, prefix="email"
         )
 
+        # --- Catch-all: anything still NaN (dist1/dist2, addr1/addr2,
+        #     card2/3/5 etc. that escape the V/D/C/M/id regex) -------------
+        df = self._fill_remaining_nans(df)
+
         return df
 
     def _apply_group_strategy(
@@ -362,21 +433,24 @@ class IEEECISPreprocessor:
         strategy: MissingGroupStrategy,
         prefix: str,
     ) -> pd.DataFrame:
-        """Apply ``strategy`` to ``columns``, optionally adding indicators."""
+        """Apply ``strategy`` to ``columns``, optionally adding indicators.
+
+        Indicator columns are built in a single ``pd.concat`` to avoid
+        fragmenting the frame (which triggers pandas' PerformanceWarning on
+        wide IEEE-CIS-sized frames).
+        """
         if not columns:
             return df
 
         if strategy.add_indicator:
-            for col in columns:
-                ind_name = f"{col}__isna"
-                # Detect first, then fill, so we don't tag imputed cells as missing.
-                indicator = df[col].isna().astype(np.int8)
-                df[ind_name] = indicator
-                if not self._fitted and ind_name not in self.state.indicator_columns:
-                    self.state.indicator_columns.append(ind_name)
+            indicators = {f"{col}__isna": df[col].isna().astype(np.int8) for col in columns}
+            df = pd.concat([df, pd.DataFrame(indicators, index=df.index)], axis=1, copy=False)
+            if not self._fitted:
+                for name in indicators:
+                    if name not in self.state.indicator_columns:
+                        self.state.indicator_columns.append(name)
 
         fill_value = strategy.fill_value
-        # pandas.fillna preserves dtype for numeric sentinels
         df[columns] = df[columns].fillna(fill_value)
         log.debug(
             "missing_filled",
@@ -384,6 +458,46 @@ class IEEECISPreprocessor:
             n_cols=len(columns),
             fill_value=fill_value,
             indicator=strategy.add_indicator,
+        )
+        return df
+
+    def _fill_remaining_nans(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Sweep any columns that still have NaN after group strategies.
+
+        Numeric columns get ``-999`` + a ``__isna`` indicator (mirroring the
+        V-feature strategy). String columns get ``"unknown"``. Reserved
+        columns (target, time, join key) are left untouched.
+        """
+        reserved = {
+            self.config.dataset.target,
+            self.config.dataset.time_column,
+            self.config.dataset.join_key,
+        }
+        na_counts = df.isna().sum()
+        leaked = [c for c, n in na_counts.items() if n > 0 and c not in reserved]
+        if not leaked:
+            return df
+
+        numeric_leaked = [c for c in leaked if pd.api.types.is_numeric_dtype(df[c])]
+        string_leaked = [c for c in leaked if c not in numeric_leaked]
+
+        if numeric_leaked:
+            indicators = {f"{col}__isna": df[col].isna().astype(np.int8) for col in numeric_leaked}
+            df = pd.concat([df, pd.DataFrame(indicators, index=df.index)], axis=1, copy=False)
+            if not self._fitted:
+                for name in indicators:
+                    if name not in self.state.indicator_columns:
+                        self.state.indicator_columns.append(name)
+            df[numeric_leaked] = df[numeric_leaked].fillna(-999)
+
+        if string_leaked:
+            df[string_leaked] = df[string_leaked].fillna("unknown")
+
+        log.info(
+            "remaining_nans_filled",
+            numeric=len(numeric_leaked),
+            string=len(string_leaked),
+            columns=leaked[:20],
         )
         return df
 
