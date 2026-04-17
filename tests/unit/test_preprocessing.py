@@ -228,3 +228,67 @@ def test_no_unexpected_nans_post_pipeline(synthetic_ieee_df: pd.DataFrame):
     # No NaNs anywhere.
     na_counts = out.isna().sum()
     assert (na_counts == 0).all(), f"Unexpected NaNs in: {na_counts[na_counts > 0].to_dict()}"
+
+
+def test_load_raw_normalizes_test_identity_column_names(
+    tmp_path: Path, synthetic_ieee_df: pd.DataFrame
+):
+    """Kaggle test_identity.csv uses ``id-01``; train uses ``id_01``. Must
+    normalize on load so fit/transform see identical column names."""
+    from fraud_detection.utils.config import AppConfig
+
+    # Create a test_transaction.csv (no id_*) and a test_identity.csv with
+    # dashed column names.
+    raw_dir = tmp_path / "raw"
+    raw_dir.mkdir()
+    cfg = AppConfig(paths={"data_raw": str(raw_dir)})
+
+    tx_cols = [c for c in synthetic_ieee_df.columns if not c.startswith("id_")]
+    synthetic_ieee_df[tx_cols].to_csv(raw_dir / cfg.dataset.transaction_file, index=False)
+
+    # Fake identity with dashed column names (like Kaggle's test_identity.csv).
+    ident = synthetic_ieee_df[["TransactionID", "id_01", "id_02", "id_30", "id_31"]].rename(
+        columns={"id_01": "id-01", "id_02": "id-02", "id_30": "id-30", "id_31": "id-31"}
+    )
+    ident.to_csv(raw_dir / cfg.dataset.identity_file, index=False)
+
+    pp = IEEECISPreprocessor(cfg)
+    df = pp.load_raw()
+    # Must have been normalized to underscores.
+    assert "id_01" in df.columns
+    assert "id-01" not in df.columns
+    assert "id_30" in df.columns
+    assert "id-30" not in df.columns
+
+
+def test_transform_stable_when_batch_has_no_leaked_nans(synthetic_ieee_df: pd.DataFrame):
+    """Regression: fit on data with NaN in addr1/dist1, then transform a batch
+    that happens to have no NaN in those cols -- output column count must match.
+
+    At fit time the catch-all sweep emits ``addr1__isna`` etc. At serve time the
+    transform batch often has no NaN in those same cols; we must still emit the
+    same indicator columns (filled with zeros) so the scaler sees the full
+    feature count, not a subset.
+    """
+    pp = _make_preprocessor()
+    fit_out = pp.fit_transform(synthetic_ieee_df)
+
+    # Craft a batch where the "leaked" columns have zero NaN.
+    clean_batch = synthetic_ieee_df.head(10).copy()
+    for col in pp.state.leaked_numeric_columns + pp.state.leaked_string_columns:
+        if col in clean_batch.columns:
+            if pd.api.types.is_numeric_dtype(clean_batch[col]):
+                clean_batch[col] = clean_batch[col].fillna(0.0)
+            else:
+                clean_batch[col] = clean_batch[col].fillna("filled")
+
+    transform_out = pp.transform(clean_batch)
+    assert transform_out.shape[1] == fit_out.shape[1], (
+        f"transform produced {transform_out.shape[1]} cols but fit produced "
+        f"{fit_out.shape[1]} -- indicator replay is broken"
+    )
+    # Indicators for leaked cols should exist and all be 0 in the clean batch.
+    for col in pp.state.leaked_numeric_columns:
+        ind = f"{col}__isna"
+        assert ind in transform_out.columns, f"missing indicator {ind}"
+        assert (transform_out[ind] == 0).all()

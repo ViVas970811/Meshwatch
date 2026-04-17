@@ -80,6 +80,11 @@ class FittedState:
     indicator_columns: list[str] = field(default_factory=list)
     categorical_mappings: dict[str, dict[Any, int]] = field(default_factory=dict)
     numeric_columns: list[str] = field(default_factory=list)
+    # Columns the catch-all sweep saw NaN in at fit time -- must be re-applied
+    # at transform time even if the transform batch happens to have no NaN,
+    # otherwise the downstream scaler receives a different feature count.
+    leaked_numeric_columns: list[str] = field(default_factory=list)
+    leaked_string_columns: list[str] = field(default_factory=list)
     amount_clip_value: float | None = None
     scaler: Any | None = None  # StandardScaler | RobustScaler | None
     n_features_out: int = 0
@@ -265,6 +270,13 @@ class IEEECISPreprocessor:
         if id_path.exists():
             log.info("load_identity_csv", path=str(id_path))
             ident = self._read_csv_memory_efficient(id_path, nrows=nrows)
+            # Kaggle's test_identity uses ``id-01..id-38`` (dash) while
+            # train_identity uses ``id_01..id_38`` (underscore). Normalize
+            # to underscores so fit/transform see the same column names.
+            ident.columns = [
+                c.replace("-", "_") if c.startswith("id-") and c[3:].isdigit() else c
+                for c in ident.columns
+            ]
             before = len(tx)
             df = tx.merge(ident, how="left", on=ds.join_key)
             log.info(
@@ -464,22 +476,34 @@ class IEEECISPreprocessor:
     def _fill_remaining_nans(self, df: pd.DataFrame) -> pd.DataFrame:
         """Sweep any columns that still have NaN after group strategies.
 
-        Numeric columns get ``-999`` + a ``__isna`` indicator (mirroring the
-        V-feature strategy). String columns get ``"unknown"``. Reserved
-        columns (target, time, join key) are left untouched.
+        At fit time: detect columns with current NaN, memoise them in
+        ``state.leaked_{numeric,string}_columns``, fill + add indicators.
+
+        At transform time: operate on the **memoised** column set, not what
+        happens to be NaN in the current batch. Small serve batches often
+        have no NaN in columns that leaked at fit, but the downstream scaler
+        still expects their indicators -- so we always emit them (filled
+        with zeros when the current batch has no NaN).
         """
         reserved = {
             self.config.dataset.target,
             self.config.dataset.time_column,
             self.config.dataset.join_key,
         }
-        na_counts = df.isna().sum()
-        leaked = [c for c, n in na_counts.items() if n > 0 and c not in reserved]
-        if not leaked:
-            return df
 
-        numeric_leaked = [c for c in leaked if pd.api.types.is_numeric_dtype(df[c])]
-        string_leaked = [c for c in leaked if c not in numeric_leaked]
+        if not self._fitted:
+            na_counts = df.isna().sum()
+            leaked = [c for c, n in na_counts.items() if n > 0 and c not in reserved]
+            numeric_leaked = [c for c in leaked if pd.api.types.is_numeric_dtype(df[c])]
+            string_leaked = [c for c in leaked if c not in numeric_leaked]
+            self.state.leaked_numeric_columns = list(numeric_leaked)
+            self.state.leaked_string_columns = list(string_leaked)
+        else:
+            numeric_leaked = [c for c in self.state.leaked_numeric_columns if c in df.columns]
+            string_leaked = [c for c in self.state.leaked_string_columns if c in df.columns]
+
+        if not numeric_leaked and not string_leaked:
+            return df
 
         if numeric_leaked:
             indicators = {f"{col}__isna": df[col].isna().astype(np.int8) for col in numeric_leaked}
@@ -497,7 +521,7 @@ class IEEECISPreprocessor:
             "remaining_nans_filled",
             numeric=len(numeric_leaked),
             string=len(string_leaked),
-            columns=leaked[:20],
+            fitted=self._fitted,
         )
         return df
 
