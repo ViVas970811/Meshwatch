@@ -1,0 +1,11 @@
+project: fraud_detection_gnn
+provider: local
+registry:
+    registry_type: file
+    path: ../../data/graphs/feast_registry.db
+online_store:
+    type: sqlite
+    path: ../../data/graphs/feast_online_store.db
+offline_store:
+    type: file
+entity_key_serialization_version: 3
