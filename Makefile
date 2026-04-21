@@ -81,6 +81,21 @@ eda: ## Launch EDA notebook
 	$(PY) -m jupyter notebook notebooks/01_eda.ipynb
 
 # ---------------------------------------------------------------------------
+# Graph + features (Phase 2)
+# ---------------------------------------------------------------------------
+build-graph: ## Build HeteroData + 119 engineered features (writes data/graphs/)
+	$(PY) scripts/build_graph.py
+
+build-graph-subset: ## Same as build-graph but on a 100K-row subset (dev mode)
+	$(PY) scripts/build_graph.py --nrows 100000
+
+feast-apply: ## Apply Feast feature views from configs/feast/features.py
+	cd configs/feast && feast apply
+
+graph-eda: ## Launch Phase 2 graph EDA notebook
+	$(PY) -m jupyter notebook notebooks/02_graph.ipynb
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 clean: ## Remove caches and build artifacts
@@ -99,3 +114,7 @@ clean-all: clean clean-data ## Remove everything (including raw data)
 tag-phase-1: ## Tag v0.1.0-data-foundation
 	git tag -a v0.1.0-data-foundation -m "Phase 1: Foundation & Data Pipeline"
 	@echo "Tag created. Push with: git push origin v0.1.0-data-foundation"
+
+tag-phase-2: ## Tag v0.2.0-graph-engine
+	git tag -a v0.2.0-graph-engine -m "Phase 2: Graph & Features"
+	@echo "Tag created. Push with: git push origin v0.2.0-graph-engine"
