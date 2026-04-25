@@ -47,12 +47,15 @@ data/raw/
 data/processed/
 data/graphs/
 data/splits/
+data/models/
 !data/.gitkeep
 !data/*/.gitkeep
 
 # Model artifacts
 mlruns/
 mlartifacts/
+mlflow.db
+mlflow.db-journal
 *.pt
 *.pth
 *.pkl
