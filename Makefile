@@ -20,8 +20,10 @@ TEST_DIR := tests
         build-graph build-graph-subset feast-apply graph-eda \
         train train-ensemble evaluate-gnn evaluate-ensemble \
         gnn-eda ensemble-eda colab-eda mlflow-ui \
+        serve serve-ray serve-dev demo-stream demo-stream-batch \
+        compose-up compose-down compose-logs docker-build-serving \
         clean clean-data clean-all \
-        tag-phase-1 tag-phase-2 tag-phase-3
+        tag-phase-1 tag-phase-2 tag-phase-3 tag-phase-4
 
 help: ## Show this help
 	@echo "Fraud Detection GNN -- common targets"
@@ -126,6 +128,39 @@ mlflow-ui: ## Launch the MLflow UI (http://localhost:5000) -- reads ./mlflow.db 
 	$(PY) -m mlflow ui --backend-store-uri sqlite:///mlflow.db
 
 # ---------------------------------------------------------------------------
+# Serving (Phase 4)
+# ---------------------------------------------------------------------------
+serve: ## Start FastAPI on http://127.0.0.1:8000 (single worker, prod-style)
+	$(PY) scripts/serve.py
+
+serve-dev: ## Start FastAPI with auto-reload (dev mode)
+	$(PY) scripts/serve.py --reload
+
+serve-ray: ## Start the API behind Ray Serve (multi-replica)
+	$(PY) scripts/serve.py --ray --num-replicas 2
+
+demo-stream: ## Replay 200 transactions at 5 RPS to /api/v1/predict
+	$(PY) scripts/demo_stream.py --n 200 --rps 5
+
+demo-stream-batch: ## Stress test: 2000 txns @ 50 RPS via /api/v1/predict/batch
+	$(PY) scripts/demo_stream.py --n 2000 --rps 50 --batch 50 --summary-only
+
+# ---------------------------------------------------------------------------
+# Docker Compose (Phase 4 infra)
+# ---------------------------------------------------------------------------
+compose-up: ## Bring up Redis + Kafka + MLflow + Prometheus + Grafana + API
+	docker compose up -d
+
+compose-down: ## Tear down compose stack (keeps named volumes)
+	docker compose down
+
+compose-logs: ## Tail logs from the API container
+	docker compose logs -f api
+
+docker-build-serving: ## Build the API image locally
+	docker build -t meshwatch/api:dev -f Dockerfile.serving .
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 clean: ## Remove caches and build artifacts
@@ -152,3 +187,7 @@ tag-phase-2: ## Tag v0.2.0-graph-engine
 tag-phase-3: ## Tag v0.3.0-gnn-model
 	git tag -a v0.3.0-gnn-model -m "Phase 3: GNN Model & Training"
 	@echo "Tag created. Push with: git push origin v0.3.0-gnn-model"
+
+tag-phase-4: ## Tag v0.4.0-serving-pipeline
+	git tag -a v0.4.0-serving-pipeline -m "Phase 4: Real-Time Serving Pipeline"
+	@echo "Tag created. Push with: git push origin v0.4.0-serving-pipeline"

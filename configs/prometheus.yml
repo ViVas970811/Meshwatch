@@ -1,0 +1,29 @@
+# Prometheus scrape config for the Meshwatch infrastructure (Phase 4).
+#
+# Scrapes the FastAPI app's /api/v1/metrics endpoint and Prometheus's own
+# self-metrics. Phase 7 adds drift / model-degradation alert rules in
+# configs/prometheus_rules.yml.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    service: meshwatch
+    env: local
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: meshwatch-api
+    metrics_path: /api/v1/metrics
+    scrape_interval: 5s
+    static_configs:
+      - targets: ["api:8000"]
+
+  - job_name: meshwatch-api-host
+    metrics_path: /api/v1/metrics
+    scrape_interval: 15s
+    static_configs:
+      - targets: ["host.docker.internal:8000"]

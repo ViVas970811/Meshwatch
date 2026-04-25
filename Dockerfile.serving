@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1.7
+# Meshwatch fraud-detection serving container
+#
+# Multi-stage build keeps the runtime image small (no pip cache, no build deps).
+
+# ---------- builder ----------
+FROM python:3.11-slim-bookworm AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Build deps for shap, confluent-kafka, etc.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+        libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+
+# CPU-only torch wheel (the default CUDA wheel is ~2 GB and not needed for inference).
+RUN pip install --upgrade pip && \
+    pip install --extra-index-url https://download.pytorch.org/whl/cpu "torch>=2.10,<2.11" && \
+    pip install ".[train,serve]"
+
+# ---------- runtime ----------
+FROM python:3.11-slim-bookworm AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    FRAUD_LOG_LEVEL=INFO
+
+# Runtime deps only (librdkafka + libgomp for xgboost).
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        libgomp1 \
+        librdkafka1 \
+        curl \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy installed Python packages + the project source.
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY src ./src
+COPY configs ./configs
+COPY scripts ./scripts
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl --fail --silent http://localhost:8000/api/v1/health || exit 1
+
+# Default to plain uvicorn; override with --ray for Ray Serve.
+CMD ["python", "-m", "uvicorn", "fraud_detection.serving.app:app", \
+     "--host", "0.0.0.0", "--port", "8000", "--access-log", "false"]
