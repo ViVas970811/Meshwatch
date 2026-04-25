@@ -371,9 +371,20 @@ class HeteroGraphBuilder:
         type_ = df.get("DeviceType")
         if info is None and type_ is None:
             return pd.Series(["unknown"] * len(df), index=df.index)
-        info = info.astype("string").fillna("") if info is not None else ""
-        type_ = type_.astype("string").fillna("") if type_ is not None else ""
-        combined = (type_.astype(str) + "|" + info.astype(str)).replace("|", "unknown")
+
+        # Normalise each side to a Series of str (use empty string when the
+        # column is absent). Done as Series operations end-to-end so the
+        # downstream `+` is series-aligned, not str-vs-Series.
+        if info is None:
+            info_s = pd.Series([""] * len(df), index=df.index, dtype="string")
+        else:
+            info_s = info.astype("string").fillna("")
+        if type_ is None:
+            type_s = pd.Series([""] * len(df), index=df.index, dtype="string")
+        else:
+            type_s = type_.astype("string").fillna("")
+
+        combined = (type_s.astype(str) + "|" + info_s.astype(str)).replace("|", "unknown")
         return combined
 
     def _ip_key_series(self, df: pd.DataFrame, *, fit: bool) -> pd.Series:
@@ -684,12 +695,23 @@ class HeteroGraphBuilder:
         self.state.to_file(path)
         log.info("graph_state_saved", path=str(path))
 
+    # ``save`` / ``load`` are the canonical names used elsewhere in the
+    # codebase (Preprocessor, FeaturePipeline, XGBoostFraudModel,
+    # FraudEnsemble). Keep ``save_state``/``load_state`` as backwards-
+    # compatible aliases.
+    save = save_state
+
     @classmethod
     def load_state(cls, path: str | Path, config: AppConfig | None = None) -> HeteroGraphBuilder:
         gb = cls(config)
         gb.state = GraphBuilderState.from_file(path)
         gb._fitted = True
         return gb
+
+    @classmethod
+    def load(cls, path: str | Path, config: AppConfig | None = None) -> HeteroGraphBuilder:
+        """Alias for :meth:`load_state` matching the rest of the codebase."""
+        return cls.load_state(path, config=config)
 
 
 __all__ = [

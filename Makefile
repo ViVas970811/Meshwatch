@@ -17,8 +17,11 @@ TEST_DIR := tests
 .PHONY: help install install-dev install-all \
         lint format typecheck test test-unit test-integration test-cov \
         download-data preprocess split eda \
+        build-graph build-graph-subset feast-apply graph-eda \
+        train train-ensemble evaluate-gnn evaluate-ensemble \
+        gnn-eda ensemble-eda colab-eda mlflow-ui \
         clean clean-data clean-all \
-        tag-phase-1
+        tag-phase-1 tag-phase-2 tag-phase-3
 
 help: ## Show this help
 	@echo "Fraud Detection GNN -- common targets"
@@ -96,6 +99,33 @@ graph-eda: ## Launch Phase 2 graph EDA notebook
 	$(PY) -m jupyter notebook notebooks/02_graph.ipynb
 
 # ---------------------------------------------------------------------------
+# Model + training (Phase 3)
+# ---------------------------------------------------------------------------
+train: ## Train the heterogeneous GNN (writes data/models/gnn/)
+	$(PY) scripts/train.py
+
+train-ensemble: ## Train the GNN+XGBoost ensemble (needs `make train` first)
+	$(PY) scripts/train_ensemble.py
+
+evaluate-gnn: ## Evaluate the GNN-only model on the test split
+	$(PY) scripts/evaluate.py --model-dir data/models/gnn --split test
+
+evaluate-ensemble: ## Evaluate the ensemble on the test split
+	$(PY) scripts/evaluate.py --model-dir data/models/ensemble --split test
+
+gnn-eda: ## Launch Phase 3 GNN training notebook
+	$(PY) -m jupyter notebook notebooks/03_gnn.ipynb
+
+ensemble-eda: ## Launch Phase 3 ensemble notebook
+	$(PY) -m jupyter notebook notebooks/04_ensemble.ipynb
+
+colab-eda: ## Launch the Colab GPU training notebook
+	$(PY) -m jupyter notebook notebooks/06_colab_training.ipynb
+
+mlflow-ui: ## Launch the MLflow UI (http://localhost:5000) -- reads ./mlflow.db (sqlite default)
+	$(PY) -m mlflow ui --backend-store-uri sqlite:///mlflow.db
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 clean: ## Remove caches and build artifacts
@@ -118,3 +148,7 @@ tag-phase-1: ## Tag v0.1.0-data-foundation
 tag-phase-2: ## Tag v0.2.0-graph-engine
 	git tag -a v0.2.0-graph-engine -m "Phase 2: Graph & Features"
 	@echo "Tag created. Push with: git push origin v0.2.0-graph-engine"
+
+tag-phase-3: ## Tag v0.3.0-gnn-model
+	git tag -a v0.3.0-gnn-model -m "Phase 3: GNN Model & Training"
+	@echo "Tag created. Push with: git push origin v0.3.0-gnn-model"
