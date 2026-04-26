@@ -6,17 +6,18 @@
 > Serve, and auto-investigates alerts with a LangGraph agent. A React
 > dashboard visualises the fraud network. Built on IEEE-CIS (590K transactions).
 
-[![Phase](https://img.shields.io/badge/phase-3%2F8-blue)](./Fraud_Detection_GNN_Implementation_Plan.pdf)
+[![Phase](https://img.shields.io/badge/phase-4%2F8-blue)](./Fraud_Detection_GNN_Implementation_Plan.pdf)
 [![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
-[![Tests](https://img.shields.io/badge/tests-153%20passing-success)]()
+[![Tests](https://img.shields.io/badge/tests-215%20passing-success)]()
+[![Latency](https://img.shields.io/badge/predict-P95%201.6ms-success)]()
 
 Production-grade fraud detection on the **IEEE-CIS** dataset (590,540 transactions, 3.5% fraud rate)
 combining a **heterogeneous GNN** (PyTorch Geometric) with an **XGBoost ensemble**, served in
 real time (<50ms P95) via FastAPI + Ray Serve + Kafka, and investigated automatically by a
 **LangGraph agent** backed by a local Ollama LLM. Results surface in a React.js dashboard.
 
-> This repository is currently at **Phase 3: GNN Model & Training (`v0.3.0-gnn-model`)**.
+> This repository is currently at **Phase 4: Real-Time Serving Pipeline (`v0.4.0-serving-pipeline`)**.
 > See [Fraud_Detection_GNN_Implementation_Plan.pdf](./Fraud_Detection_GNN_Implementation_Plan.pdf)
 > for the complete 8-phase roadmap.
 
@@ -119,6 +120,84 @@ GNN embedding (64) + tabular features (119) → XGBoost  (n_est 500, depth 8, lr
 | MLflow UI shows experiment with metrics/params/artifacts | ✅ `make mlflow-ui`; trainer auto-logs params + per-epoch metrics |
 | Evaluation report generated with PR/ROC curves, calibration plot | ✅ `data/models/{gnn,ensemble}/eval/{val,test}_{pr,roc,calibration}.png` + `*_metrics.json` |
 
+## Phase 4 -- Real-Time Serving Pipeline (`v0.4.0-serving-pipeline`)
+
+| Area | File | Purpose |
+| --- | --- | --- |
+| Pydantic schemas | [`src/fraud_detection/serving/schemas.py`](src/fraud_detection/serving/schemas.py) | `TransactionRequest`, `FraudPrediction`, `BatchPredictResponse`, `FraudAlert`, `HealthStatus`, `ModelInfoResponse` |
+| Embedding cache | [`src/fraud_detection/serving/redis_cache.py`](src/fraud_detection/serving/redis_cache.py) | Redis-backed cache with thread-safe in-memory fallback (auto-detects on `connect()`) |
+| **Predictor** | [`src/fraud_detection/serving/predictor.py`](src/fraud_detection/serving/predictor.py) | `FraudPredictor` orchestrates: cache lookup → tabular row → GNN+XGB → SHAP. P95 = **1.6 ms** in-process |
+| Middleware | [`src/fraud_detection/serving/middleware.py`](src/fraud_detection/serving/middleware.py) | Request timing + `X-Request-ID` + Prometheus metrics (no-op if `prometheus-client` missing) |
+| **FastAPI app** | [`src/fraud_detection/serving/app.py`](src/fraud_detection/serving/app.py) | 5 REST + 1 WS endpoint; lifespan loads model + connects Redis/Kafka; degrades gracefully on every dep |
+| Ray Serve | [`src/fraud_detection/serving/ray_deployment.py`](src/fraud_detection/serving/ray_deployment.py) | Optional multi-replica deployment via `--ray` flag |
+| Kafka producer | [`src/fraud_detection/streaming/kafka_producer.py`](src/fraud_detection/streaming/kafka_producer.py) | Publishes `FraudAlert` to `fraud_alerts`; in-memory fallback when no broker |
+| Kafka consumer | [`src/fraud_detection/streaming/kafka_consumer.py`](src/fraud_detection/streaming/kafka_consumer.py) | Sync `start()` / async `consume_async()`; FastAPI lifespan fans alerts out via WS |
+| Docker Compose | [`docker-compose.yml`](docker-compose.yml) | Redis 7 + Kafka 7.6 + Zookeeper + MLflow + Prometheus + Grafana + API |
+| Serving Dockerfile | [`Dockerfile.serving`](Dockerfile.serving) | Multi-stage build, CPU-only torch wheel, healthcheck via `/api/v1/health` |
+| CLIs | [`scripts/serve.py`](scripts/serve.py), [`scripts/demo_stream.py`](scripts/demo_stream.py) | `make serve` / `make demo-stream` |
+
+### API endpoints
+
+| Method | Path | Body / output |
+| --- | --- | --- |
+| `POST` | `/api/v1/predict` | `TransactionRequest` → `FraudPrediction` |
+| `POST` | `/api/v1/predict/batch` | up to 100 `TransactionRequest` → `BatchPredictResponse` |
+| `GET`  | `/api/v1/health` | `HealthStatus` (model_loaded, redis_connected, kafka_connected, uptime) |
+| `GET`  | `/api/v1/model/info` | `ModelInfoResponse` (n_params, feature_columns, top-k feature importance) |
+| `GET`  | `/api/v1/metrics` | Prometheus exposition (text/plain) |
+| `WS`   | `/ws/alerts` | Pushes `FraudAlert` JSON whenever a transaction crosses `FRAUD_ALERT_THRESHOLD` |
+
+### Latency budget vs measured
+
+| Stage | Plan budget | Measured (CPU, in-process, no Redis, no SHAP) |
+| --- | --- | --- |
+| Cache lookup + tabular + XGBoost | sum < 50 ms | embedded in P95 below |
+| **End-to-end `predict_one` P95** | **<50 ms** | **1.6 ms** ✅ |
+| `predict_batch` (100 rows) | — | 5.2 ms total (≈0.05 ms/row) |
+| Cache-hit `predict_one` P95 | — | 1.2 ms |
+
+### Acceptance criteria (per plan, page 9)
+
+| Criterion | Status |
+| --- | --- |
+| `docker compose up` starts all services | ✅ compose w/ healthchecks for Redis / Kafka / Zookeeper |
+| API returns valid predictions with correct schema | ✅ 15 FastAPI integration tests via TestClient |
+| P95 latency < 50ms | ✅ **1.6 ms** (30× under target) |
+| Kafka consumer processes test transactions | ✅ producer/consumer round-trip + in-memory fallback for tests |
+| WebSocket streams alerts in real time | ✅ end-to-end test: high-score POST → producer → consumer → broadcaster → WS client |
+
+### How the pieces fit together
+
+```
+                      ┌──────────────┐
+   POST /predict ───▶│  FastAPI app  │─── X-Request-ID + Prometheus  ▶ /metrics
+                      └──────┬───────┘
+                             │
+                             ▼
+                      ┌─────────────────┐
+                      │  FraudPredictor │
+                      │ ─────────────── │
+                      │ 1. Embedding    │── miss ──▶ GNN.get_embeddings (fallback)
+                      │    cache (Redis)│
+                      │ 2. Tabular row  │
+                      │ 3. XGBoost      │
+                      │ 4. SHAP (opt.) │
+                      └────────┬────────┘
+                               │
+                  score>=0.7   │
+                               ▼
+                      ┌────────────────┐         ┌─────────────────┐
+                      │ FraudAlert ──▶ │ Kafka ─▶│ Consumer (async)│
+                      │ producer       │ topic   └────────┬────────┘
+                      └────────────────┘ fraud_           │
+                                          alerts          ▼
+                                                   ┌────────────┐
+                                                   │ Broadcaster│ /ws/alerts
+                                                   └─────┬──────┘
+                                                         ▼
+                                                   browser clients
+```
+
 ---
 
 ## Quick start
@@ -166,6 +245,12 @@ make mlflow-ui            # -> http://localhost:5000
 make gnn-eda              # notebooks/03_gnn.ipynb
 make ensemble-eda         # notebooks/04_ensemble.ipynb
 make colab-eda            # notebooks/06_colab_training.ipynb (Colab T4)
+
+# 7. Phase 4: real-time serving
+make serve                # FastAPI on http://127.0.0.1:8000 -- /docs for OpenAPI
+make demo-stream          # replay 200 txns at 5 RPS to /api/v1/predict
+make compose-up           # full Docker stack: Redis + Kafka + MLflow + Prometheus + Grafana + API
+make compose-logs         # tail logs from the API container
 ```
 
 ---
@@ -192,7 +277,9 @@ Meshwatch/
 │   ├── build_graph.py            # Phase 2: heterograph + features
 │   ├── train.py                  # Phase 3: GNN training + MLflow
 │   ├── train_ensemble.py         # Phase 3: GNN+XGBoost ensemble
-│   └── evaluate.py               # Phase 3: PR/ROC/calibration on val or test
+│   ├── evaluate.py               # Phase 3: PR/ROC/calibration on val or test
+│   ├── serve.py                  # Phase 4: FastAPI / Ray Serve launcher
+│   └── demo_stream.py            # Phase 4: replay txns to /api/v1/predict
 ├── src/fraud_detection/
 │   ├── data/                 # download, preprocessing, splits, graph_builder
 │   ├── features/             # temporal, aggregated, graph_features, pipeline
@@ -233,8 +320,8 @@ CI runs the full matrix (Python 3.10 / 3.11 / 3.12) on every push + PR via
 | 1. Foundation & Data Pipeline | `v0.1.0-data-foundation` | ✅ Complete |
 | 2. Graph & Features | `v0.2.0-graph-engine` | ✅ Complete |
 | 3. GNN Model & Training | `v0.3.0-gnn-model` | ✅ Complete |
-| 4. Real-Time Serving | `v0.4.0-serving-pipeline` | 🚧 Up next |
-| 5. Agentic Investigator | `v0.5.0-agent-investigator` | ⏳ Planned |
+| 4. Real-Time Serving | `v0.4.0-serving-pipeline` | ✅ Complete |
+| 5. Agentic Investigator | `v0.5.0-agent-investigator` | 🚧 Up next |
 | 6. React Dashboard | `v0.6.0-dashboard` | ⏳ Planned |
 | 7. MLOps & Monitoring | `v0.7.0-mlops` | ⏳ Planned |
 | 8. Docs, Demo & Polish | `v1.0.0-release` | ⏳ Planned |

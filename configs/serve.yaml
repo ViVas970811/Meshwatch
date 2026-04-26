@@ -1,0 +1,47 @@
+# Phase 4 serving configuration.
+# Loaded by ``fraud_detection.serving.app`` via env-var overrides; this file
+# documents the canonical defaults + acts as a config-as-code reference.
+
+server:
+  host: 0.0.0.0
+  port: 8000
+  workers: 1                  # plain uvicorn worker count (ignored by Ray Serve)
+  log_level: info
+  access_log_via_middleware: true
+
+predictor:
+  ensemble_dir: data/models/ensemble
+  alert_threshold: 0.7        # writes to Kafka 'fraud_alerts' at-or-above
+  enable_shap: true
+  shap_max_display: 5
+
+cache:
+  redis_url: null             # null -> in-memory fallback
+  ttl_seconds: 3600
+  embedding_dim: 64
+  warm_up_at_startup: false   # if true, walk known cards and seed Redis
+
+streaming:
+  bootstrap_servers: null     # null -> in-memory fallback (tests + local laptop)
+  fraud_topic: fraud_alerts
+  consumer_group: meshwatch-fanout
+  poll_timeout_seconds: 1.0
+
+ray_serve:
+  enabled: false              # opt-in via scripts/serve.py --ray
+  num_replicas: 1
+  num_cpus_per_replica: 0.5
+  max_ongoing_requests: 64
+
+prometheus:
+  enabled: true
+  endpoint: /api/v1/metrics
+
+# Latency budget (ms) -- per the implementation plan, page 9.
+latency_budget_ms:
+  feast_get: 2
+  temporal_features: 5
+  redis_get_embedding: 1
+  xgboost_predict: 2
+  shap_explanation: 10
+  total_p95: 50
