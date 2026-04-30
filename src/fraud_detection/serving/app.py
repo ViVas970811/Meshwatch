@@ -42,6 +42,7 @@ from fraud_detection.serving.schemas import (
     FraudAlert,
     FraudPrediction,
     HealthStatus,
+    InvestigationRequest,
     ModelInfoResponse,
     TransactionRequest,
 )
@@ -110,6 +111,12 @@ class AppState:
     started_at: float
     settings: dict[str, Any]
 
+    # Phase 5 -- LangGraph investigator. Both are ``None`` if the agent
+    # extras aren't installed; the ``/api/v1/investigate`` endpoint then
+    # returns 503.
+    agent_deps: Any | None
+    agent_compiled: Any | None
+
     def __init__(self) -> None:
         self.predictor = None
         self.producer = None
@@ -117,6 +124,8 @@ class AppState:
         self.broadcaster = AlertBroadcaster()
         self.started_at = time.time()
         self.settings = {}
+        self.agent_deps = None
+        self.agent_compiled = None
 
 
 # ---------------------------------------------------------------------------
@@ -181,6 +190,42 @@ async def lifespan(app: FastAPI):
         await state.broadcaster.broadcast(alert)
 
     consumer_task = asyncio.create_task(state.consumer.consume_async(_fanout))
+
+    # Phase 5 -- compile the LangGraph investigator if extras are installed.
+    if os.environ.get("FRAUD_AGENT_DISABLED", "false").lower() != "true":
+        try:
+            from fraud_detection.agent import AgentDeps, build_graph
+
+            # Optional: wire a Neo4j-backed graph traversal if NEO4J_URI is set.
+            neo4j_graph = None
+            if os.environ.get("NEO4J_URI"):
+                try:
+                    from fraud_detection.agent import Neo4jGraphAdapter
+
+                    adapter = Neo4jGraphAdapter()
+                    if adapter.connect():
+                        neo4j_graph = adapter
+                        log.info("agent_neo4j_attached", uri=adapter.uri)
+                    else:
+                        log.warning("agent_neo4j_unreachable_skipping")
+                except Exception as exc:
+                    log.warning("agent_neo4j_init_failed", error=str(exc))
+
+            # Optional: try a real Ollama daemon when OLLAMA_BASE_URL is set;
+            # otherwise default to the deterministic stub.
+            from fraud_detection.agent import get_llm
+
+            llm = get_llm(prefer_ollama=bool(os.environ.get("OLLAMA_BASE_URL")))
+
+            state.agent_deps = AgentDeps(llm=llm, graph=neo4j_graph)
+            state.agent_compiled = build_graph(state.agent_deps)
+            log.info(
+                "agent_ready",
+                llm=getattr(state.agent_deps.llm, "name", "stub"),
+                neo4j=neo4j_graph is not None,
+            )
+        except Exception as exc:
+            log.warning("agent_unavailable", error=str(exc))
 
     app.state.fraud_app = state
     try:
@@ -320,6 +365,46 @@ def _register_routes(app: FastAPI) -> None:
     @app.get("/api/v1/metrics", tags=["system"])
     async def metrics_endpoint() -> Response:
         return Response(content=metrics.render(), media_type=metrics.content_type)
+
+    # ---- Investigate (Phase 5) ----------------------------------------------
+
+    @app.post("/api/v1/investigate", tags=["investigate"])
+    async def investigate_endpoint(
+        request: Request,
+        payload: InvestigationRequest = Body(...),  # noqa: B008 -- FastAPI idiom
+    ) -> dict[str, Any]:
+        s = _state(request)
+        if s.agent_compiled is None or s.agent_deps is None:
+            raise HTTPException(status_code=503, detail="Agent not available")
+
+        # Resolve a FraudPrediction. If the caller didn't supply one we
+        # require a transaction + a loaded predictor.
+        prediction = payload.prediction
+        tx = payload.transaction
+        if prediction is None:
+            if s.predictor is None or tx is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Either 'prediction' or 'transaction' (with model loaded) is required.",
+                )
+            prediction = s.predictor.predict_one(tx)
+
+        from fraud_detection.agent import investigate, new_state
+
+        request_payload = (
+            tx.model_dump(by_alias=True)
+            if tx is not None
+            else {"transaction_id": prediction.transaction_id}
+        )
+        state = new_state(
+            transaction_id=prediction.transaction_id,
+            prediction=prediction,
+            request=request_payload,
+            alert_id=payload.alert_id,
+        )
+        report = investigate(state, deps=s.agent_deps, compiled=s.agent_compiled)
+        metrics.predictions_total.labels(report.risk_level).inc()
+        return report.model_dump(mode="json")
 
     # ---- WebSocket alert stream --------------------------------------------
 

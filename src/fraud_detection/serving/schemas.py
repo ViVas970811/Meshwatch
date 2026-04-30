@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # ---------------------------------------------------------------------------
 # Request models
@@ -182,6 +182,33 @@ def risk_level(score: float) -> Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]:
     return "LOW"
 
 
+# ---------------------------------------------------------------------------
+# Agent investigation (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+class InvestigationRequest(BaseModel):
+    """Trigger an agent investigation for a transaction.
+
+    Either supply a fully-formed :class:`TransactionRequest` (the API
+    will re-score it under the hood) or supply an existing
+    :class:`FraudPrediction` to skip re-scoring.
+    """
+
+    transaction: TransactionRequest | None = None
+    prediction: FraudPrediction | None = None
+    alert_id: str | None = Field(
+        default=None,
+        description="Optional caller-supplied alert id (defaults to ``inv-{transaction_id}``).",
+    )
+
+    @model_validator(mode="after")
+    def _require_one_of_transaction_or_prediction(self) -> InvestigationRequest:
+        if self.transaction is None and self.prediction is None:
+            raise ValueError("Provide either 'transaction' or 'prediction' (or both).")
+        return self
+
+
 __all__ = [
     "ALERT_THRESHOLD",
     "BatchPredictRequest",
@@ -190,6 +217,7 @@ __all__ = [
     "FraudAlert",
     "FraudPrediction",
     "HealthStatus",
+    "InvestigationRequest",
     "ModelInfoResponse",
     "TransactionRequest",
     "risk_level",
