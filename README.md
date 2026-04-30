@@ -6,11 +6,12 @@
 > Serve, and auto-investigates alerts with a LangGraph agent. A React
 > dashboard visualises the fraud network. Built on IEEE-CIS (590K transactions).
 
-[![Phase](https://img.shields.io/badge/phase-4%2F8-blue)](./Fraud_Detection_GNN_Implementation_Plan.pdf)
+[![Phase](https://img.shields.io/badge/phase-5%2F8-blue)](./Fraud_Detection_GNN_Implementation_Plan.pdf)
 [![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
-[![Tests](https://img.shields.io/badge/tests-215%20passing-success)]()
+[![Tests](https://img.shields.io/badge/tests-299%20passing-success)]()
 [![Latency](https://img.shields.io/badge/predict-P95%201.6ms-success)]()
+[![Agent](https://img.shields.io/badge/investigate-%3C50ms-success)]()
 
 Production-grade fraud detection on the **IEEE-CIS** dataset (590,540 transactions, 3.5% fraud rate)
 combining a **heterogeneous GNN** (PyTorch Geometric) with an **XGBoost ensemble**, served in
@@ -74,6 +75,15 @@ make serve                # FastAPI on http://127.0.0.1:8000 -- /docs for OpenAP
 make demo-stream          # replay 200 txns at 5 RPS to /api/v1/predict
 make compose-up           # full Docker stack: Redis + Kafka + MLflow + Prometheus + Grafana + API
 make compose-logs         # tail logs from the API container
+
+# 8. Phase 5: agentic investigator (LangGraph + Ollama)
+make investigate          # run the agent on a synthetic HIGH alert (stub LLM)
+make investigate-critical # CRITICAL alert -> all 8 tools fire
+make investigate-ollama   # route through a local Ollama daemon (llama3.1:8b)
+# or hit the live API:
+#   curl -s http://localhost:8000/api/v1/investigate \
+#        -H 'content-type: application/json' \
+#        -d '{"prediction": {...}}' | jq
 ```
 
 ---
@@ -102,7 +112,8 @@ Meshwatch/
 │   ├── train_ensemble.py         # Phase 3: GNN+XGBoost ensemble
 │   ├── evaluate.py               # Phase 3: PR/ROC/calibration on val or test
 │   ├── serve.py                  # Phase 4: FastAPI / Ray Serve launcher
-│   └── demo_stream.py            # Phase 4: replay txns to /api/v1/predict
+│   ├── demo_stream.py            # Phase 4: replay txns to /api/v1/predict
+│   └── investigate.py            # Phase 5: run the LangGraph investigator on a synthetic alert
 ├── src/fraud_detection/
 │   ├── data/                 # download, preprocessing, splits, graph_builder
 │   ├── features/             # temporal, aggregated, graph_features, pipeline
@@ -144,8 +155,8 @@ CI runs the full matrix (Python 3.10 / 3.11 / 3.12) on every push + PR via
 | 2. Graph & Features | `v0.2.0-graph-engine` | ✅ Complete |
 | 3. GNN Model & Training | `v0.3.0-gnn-model` | ✅ Complete |
 | 4. Real-Time Serving | `v0.4.0-serving-pipeline` | ✅ Complete |
-| 5. Agentic Investigator | `v0.5.0-agent-investigator` | 🚧 Up next |
-| 6. React Dashboard | `v0.6.0-dashboard` | ⏳ Planned |
+| 5. Agentic Investigator | `v0.5.0-agent-investigator` | ✅ Complete |
+| 6. React Dashboard | `v0.6.0-dashboard` | 🚧 Up next |
 | 7. MLOps & Monitoring | `v0.7.0-mlops` | ⏳ Planned |
 | 8. Docs, Demo & Polish | `v1.0.0-release` | ⏳ Planned |
 

@@ -24,7 +24,7 @@ COPY src ./src
 # CPU-only torch wheel (the default CUDA wheel is ~2 GB and not needed for inference).
 RUN pip install --upgrade pip && \
     pip install --extra-index-url https://download.pytorch.org/whl/cpu "torch>=2.10,<2.11" && \
-    pip install ".[train,serve]"
+    pip install ".[train,serve,agent]"
 
 # ---------- runtime ----------
 FROM python:3.11-slim-bookworm AS runtime

@@ -26,15 +26,17 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install package (dev + train + serve extras, CPU-only torch)
+      - name: Install package (dev + train + serve + agent extras, CPU-only torch)
         # The ``train`` extras pull in PyTorch. By default pip picks the
         # CUDA wheel which is ~2GB; we want the CPU wheel for CI speed.
         # ``serve`` adds Ray Serve, confluent-kafka, SHAP, prometheus-client
         # and websockets so the Phase 4 serving tests can import them.
+        # ``agent`` adds LangGraph, LangChain, langchain-ollama, langfuse,
+        # faiss-cpu and neo4j for the Phase 5 investigator.
         run: |
           python -m pip install --upgrade pip
           pip install --extra-index-url https://download.pytorch.org/whl/cpu "torch>=2.10,<2.11"
-          pip install -e ".[dev,train,serve]"
+          pip install -e ".[dev,train,serve,agent]"
 
       - name: Lint (ruff)
         run: |

@@ -22,8 +22,9 @@ TEST_DIR := tests
         gnn-eda ensemble-eda colab-eda mlflow-ui \
         serve serve-ray serve-dev demo-stream demo-stream-batch \
         compose-up compose-down compose-logs docker-build-serving \
+        investigate investigate-critical investigate-ollama \
         clean clean-data clean-all \
-        tag-phase-1 tag-phase-2 tag-phase-3 tag-phase-4
+        tag-phase-1 tag-phase-2 tag-phase-3 tag-phase-4 tag-phase-5
 
 help: ## Show this help
 	@echo "Fraud Detection GNN -- common targets"
@@ -161,6 +162,18 @@ docker-build-serving: ## Build the API image locally
 	docker build -t meshwatch/api:dev -f Dockerfile.serving .
 
 # ---------------------------------------------------------------------------
+# Agentic Investigator (Phase 5)
+# ---------------------------------------------------------------------------
+investigate: ## Run the LangGraph investigator on a synthetic HIGH alert (stub LLM)
+	$(PY) scripts/investigate.py --score 0.85 --amount 420
+
+investigate-critical: ## Run the investigator on a synthetic CRITICAL alert
+	$(PY) scripts/investigate.py --score 0.95 --amount 4210
+
+investigate-ollama: ## Same as `investigate` but routes through a local Ollama daemon
+	$(PY) scripts/investigate.py --score 0.95 --amount 4210 --use-ollama
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 clean: ## Remove caches and build artifacts
@@ -191,3 +204,7 @@ tag-phase-3: ## Tag v0.3.0-gnn-model
 tag-phase-4: ## Tag v0.4.0-serving-pipeline
 	git tag -a v0.4.0-serving-pipeline -m "Phase 4: Real-Time Serving Pipeline"
 	@echo "Tag created. Push with: git push origin v0.4.0-serving-pipeline"
+
+tag-phase-5: ## Tag v0.5.0-agent-investigator
+	git tag -a v0.5.0-agent-investigator -m "Phase 5: Agentic AI Investigator"
+	@echo "Tag created. Push with: git push origin v0.5.0-agent-investigator"
