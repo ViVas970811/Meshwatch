@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+coverage/
+.DS_Store
+
+# tsc -b emit artifacts (vite.config.ts + vitest.config.ts are TypeScript;
+# composite mode forces emit alongside the sources -- ignore the .js / .d.ts).
+vite.config.js
+vite.config.d.ts
+vitest.config.js
+vitest.config.d.ts

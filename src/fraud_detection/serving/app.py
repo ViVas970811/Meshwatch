@@ -26,11 +26,14 @@ import asyncio
 import contextlib
 import os
 import time
+from collections import deque
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from fraud_detection.serving.middleware import RequestTimingMiddleware, metrics
@@ -117,6 +120,11 @@ class AppState:
     agent_deps: Any | None
     agent_compiled: Any | None
 
+    # Phase 6 -- in-memory rolling history so the dashboard can populate
+    # its initial view without forcing every demo to run a long replay.
+    recent_predictions: deque[FraudPrediction]
+    recent_alerts: deque[FraudAlert]
+
     def __init__(self) -> None:
         self.predictor = None
         self.producer = None
@@ -126,6 +134,8 @@ class AppState:
         self.settings = {}
         self.agent_deps = None
         self.agent_compiled = None
+        self.recent_predictions = deque(maxlen=200)
+        self.recent_alerts = deque(maxlen=200)
 
 
 # ---------------------------------------------------------------------------
@@ -249,9 +259,25 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Meshwatch Fraud Detection",
-        version="v0.4.0-serving-pipeline",
+        version="v0.6.0-dashboard",
         description="Real-time GNN+XGBoost fraud-detection inference API.",
         lifespan=lifespan,
+    )
+    # Phase 6 -- allow the React dashboard (Vite dev server on :5173, plus
+    # any operator-supplied origins) to call the API. We default to a
+    # sensible local-dev set; override with ``FRAUD_CORS_ORIGINS=*`` for
+    # an open dev box, or a comma-separated list for production.
+    cors_origins = os.environ.get(
+        "FRAUD_CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173",
+    )
+    origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=origins or ["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
     app.add_middleware(RequestTimingMiddleware)
     _register_routes(app)
@@ -280,11 +306,13 @@ def _register_routes(app: FastAPI) -> None:
             raise HTTPException(status_code=503, detail="Model not loaded")
         result = s.predictor.predict_one(payload)
         metrics.predictions_total.labels(result.risk_level).inc()
+        s.recent_predictions.append(result)
         if result.fraud_score >= s.predictor.threshold and s.producer is not None:
             alert = _to_alert(result, payload)
             s.producer.publish(alert)
             if not s.producer.is_kafka and s.consumer is not None:
                 s.consumer.push_in_memory(alert)
+            s.recent_alerts.append(alert)
             metrics.alerts_total.labels("kafka").inc()
         return result
 
@@ -304,11 +332,13 @@ def _register_routes(app: FastAPI) -> None:
         n_alerts = 0
         for r, tx in zip(results, payload.transactions, strict=True):
             metrics.predictions_total.labels(r.risk_level).inc()
+            s.recent_predictions.append(r)
             if r.fraud_score >= s.predictor.threshold and s.producer is not None:
                 alert = _to_alert(r, tx)
                 s.producer.publish(alert)
                 if not s.producer.is_kafka and s.consumer is not None:
                     s.consumer.push_in_memory(alert)
+                s.recent_alerts.append(alert)
                 metrics.alerts_total.labels("kafka").inc()
                 n_alerts += 1
         return BatchPredictResponse(
@@ -359,6 +389,20 @@ def _register_routes(app: FastAPI) -> None:
             train_metrics={},  # Phase 7 will populate from MLflow
             feature_importance_top_k=top,
         )
+
+    # ---- Recent buffer (Phase 6 dashboard first-load) ----------------------
+
+    @app.get("/api/v1/recent", tags=["dashboard"])
+    async def recent(request: Request, limit: int = 100) -> dict[str, Any]:
+        s = _state(request)
+        cap = max(1, min(int(limit), 200))
+        preds = list(s.recent_predictions)[-cap:][::-1]
+        alerts = list(s.recent_alerts)[-cap:][::-1]
+        return {
+            "predictions": [p.model_dump(mode="json") for p in preds],
+            "alerts": [a.model_dump(mode="json") for a in alerts],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     # ---- Prometheus metrics -------------------------------------------------
 
