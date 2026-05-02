@@ -151,7 +151,7 @@ demo-stream-batch: ## Stress test: 2000 txns @ 50 RPS via /api/v1/predict/batch
 # ---------------------------------------------------------------------------
 # Docker Compose (Phase 4 infra)
 # ---------------------------------------------------------------------------
-compose-up: ## Bring up Redis + Kafka + MLflow + Prometheus + Grafana + API
+compose-up: ## Bring up Redis + Kafka + MLflow + Prometheus + Grafana + API + Dashboard
 	docker compose up -d
 
 compose-down: ## Tear down compose stack (keeps named volumes)

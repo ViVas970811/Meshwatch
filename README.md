@@ -74,7 +74,7 @@ make colab-eda            # notebooks/06_colab_training.ipynb (Colab T4)
 # 7. Phase 4: real-time serving
 make serve                # FastAPI on http://127.0.0.1:8000 -- /docs for OpenAPI
 make demo-stream          # replay 200 txns at 5 RPS to /api/v1/predict
-make compose-up           # full Docker stack: Redis + Kafka + MLflow + Prometheus + Grafana + API
+make compose-up           # full Docker stack: Redis + Kafka + MLflow + Prometheus + Grafana + API + Dashboard
 make compose-logs         # tail logs from the API container
 
 # 8. Phase 5: agentic investigator (LangGraph + Ollama)
@@ -91,6 +91,9 @@ make dashboard-install    # one-time: cd dashboard && npm install
 make dashboard-dev        # http://localhost:5173 (proxies /api + /ws to :8000)
 make dashboard-test       # vitest run (32 tests)
 make dashboard-build      # production bundle -> dashboard/dist/
+# OR run dashboard alongside the rest of the stack:
+make compose-up           # api + dashboard + redis + kafka + mlflow + prometheus + grafana
+#                         # dashboard at http://localhost:5173, api at http://localhost:8000
 ```
 
 ---
@@ -146,16 +149,27 @@ Meshwatch/
 
 ## Development
 
+Python (backend, agent, training):
+
 ```bash
-make lint         # ruff check
-make format       # ruff format + autofix
-make typecheck    # mypy
-make test         # pytest unit tests (85 tests, ~30 s)
-make test-cov     # unit tests with coverage report
+make lint            # ruff check
+make format          # ruff format + autofix
+make typecheck       # mypy
+make test            # pytest unit tests (299 tests, ~50 s)
+make test-cov        # unit tests with coverage report
 ```
 
-CI runs the full matrix (Python 3.10 / 3.11 / 3.12) on every push + PR via
-`.github/workflows/ci.yml`.
+TypeScript (dashboard):
+
+```bash
+make dashboard-lint  # tsc -b (composite project type-check)
+make dashboard-test  # vitest run (32 tests)
+make dashboard-build # production Vite bundle -> dashboard/dist/
+```
+
+CI runs the full Python matrix (Python 3.10 / 3.11 / 3.12) on every push + PR
+via `.github/workflows/ci.yml`. The dashboard test suite is run locally; a
+dedicated CI job lands in Phase 7 alongside the MLOps work.
 
 ---
 
