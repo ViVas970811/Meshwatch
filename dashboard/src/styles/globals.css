@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---- base scrollbar ----------------------------------------------------- */
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #2a3253; border-radius: 4px; }
+*::-webkit-scrollbar-thumb:hover { background: #475070; }
+
+/* ---- card surface utility ----------------------------------------------- */
+@layer components {
+  .surface {
+    @apply rounded-2xl bg-ink-800/70 ring-1 ring-ink-700 shadow-lg;
+  }
+  .surface-muted {
+    @apply rounded-2xl bg-ink-800/40 ring-1 ring-ink-700;
+  }
+  .surface-pad {
+    @apply p-5;
+  }
+  .stat-label {
+    @apply text-xs uppercase tracking-wider text-ink-400;
+  }
+  .stat-value {
+    @apply text-3xl font-semibold text-ink-100 tabular-nums;
+  }
+  .grid-bg {
+    background-image:
+      radial-gradient(circle at 30% 0%, rgba(91,141,239,0.08), transparent 60%),
+      radial-gradient(circle at 80% 100%, rgba(134,171,255,0.06), transparent 50%);
+  }
+}
+
+html, body, #root { height: 100%; }

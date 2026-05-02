@@ -130,6 +130,17 @@ services:
       - ./configs:/app/configs:ro
     restart: unless-stopped
 
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: meshwatch-dashboard
+    depends_on:
+      - api
+    ports:
+      - "5173:80"
+    restart: unless-stopped
+
 volumes:
   redis_data:
   mlflow_data:

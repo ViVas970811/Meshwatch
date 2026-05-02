@@ -23,8 +23,10 @@ TEST_DIR := tests
         serve serve-ray serve-dev demo-stream demo-stream-batch \
         compose-up compose-down compose-logs docker-build-serving \
         investigate investigate-critical investigate-ollama \
+        dashboard-install dashboard-dev dashboard-build dashboard-test dashboard-lint dashboard-preview \
+        docker-build-dashboard \
         clean clean-data clean-all \
-        tag-phase-1 tag-phase-2 tag-phase-3 tag-phase-4 tag-phase-5
+        tag-phase-1 tag-phase-2 tag-phase-3 tag-phase-4 tag-phase-5 tag-phase-6
 
 help: ## Show this help
 	@echo "Fraud Detection GNN -- common targets"
@@ -149,7 +151,7 @@ demo-stream-batch: ## Stress test: 2000 txns @ 50 RPS via /api/v1/predict/batch
 # ---------------------------------------------------------------------------
 # Docker Compose (Phase 4 infra)
 # ---------------------------------------------------------------------------
-compose-up: ## Bring up Redis + Kafka + MLflow + Prometheus + Grafana + API
+compose-up: ## Bring up Redis + Kafka + MLflow + Prometheus + Grafana + API + Dashboard
 	docker compose up -d
 
 compose-down: ## Tear down compose stack (keeps named volumes)
@@ -172,6 +174,30 @@ investigate-critical: ## Run the investigator on a synthetic CRITICAL alert
 
 investigate-ollama: ## Same as `investigate` but routes through a local Ollama daemon
 	$(PY) scripts/investigate.py --score 0.95 --amount 4210 --use-ollama
+
+# ---------------------------------------------------------------------------
+# React Dashboard (Phase 6)
+# ---------------------------------------------------------------------------
+dashboard-install: ## Install dashboard npm dependencies
+	cd dashboard && npm install
+
+dashboard-dev: ## Run the Vite dev server on http://localhost:5173 (proxies /api -> :8000)
+	cd dashboard && npm run dev
+
+dashboard-build: ## Production build (Vite -> dashboard/dist)
+	cd dashboard && npm run build
+
+dashboard-preview: ## Serve the built dist/ locally
+	cd dashboard && npm run preview
+
+dashboard-test: ## Run the Vitest suite (32 tests)
+	cd dashboard && npm test
+
+dashboard-lint: ## Type-check the dashboard
+	cd dashboard && npx tsc -b
+
+docker-build-dashboard: ## Build the dashboard nginx image locally
+	docker build -t meshwatch/dashboard:dev -f Dockerfile.dashboard .
 
 # ---------------------------------------------------------------------------
 # Cleanup
@@ -208,3 +234,7 @@ tag-phase-4: ## Tag v0.4.0-serving-pipeline
 tag-phase-5: ## Tag v0.5.0-agent-investigator
 	git tag -a v0.5.0-agent-investigator -m "Phase 5: Agentic AI Investigator"
 	@echo "Tag created. Push with: git push origin v0.5.0-agent-investigator"
+
+tag-phase-6: ## Tag v0.6.0-dashboard
+	git tag -a v0.6.0-dashboard -m "Phase 6: React Dashboard"
+	@echo "Tag created. Push with: git push origin v0.6.0-dashboard"
