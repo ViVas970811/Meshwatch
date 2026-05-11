@@ -25,8 +25,9 @@ TEST_DIR := tests
         investigate investigate-critical investigate-ollama \
         dashboard-install dashboard-dev dashboard-build dashboard-test dashboard-lint dashboard-preview \
         docker-build-dashboard \
+        drift-report drift-report-evidently grafana-open prometheus-open \
         clean clean-data clean-all \
-        tag-phase-1 tag-phase-2 tag-phase-3 tag-phase-4 tag-phase-5 tag-phase-6
+        tag-phase-1 tag-phase-2 tag-phase-3 tag-phase-4 tag-phase-5 tag-phase-6 tag-phase-7
 
 help: ## Show this help
 	@echo "Fraud Detection GNN -- common targets"
@@ -200,6 +201,30 @@ docker-build-dashboard: ## Build the dashboard nginx image locally
 	docker build -t meshwatch/dashboard:dev -f Dockerfile.dashboard .
 
 # ---------------------------------------------------------------------------
+# Monitoring (Phase 7)
+# ---------------------------------------------------------------------------
+drift-report: ## Compute drift between train + test splits (writes data/reports/latest/)
+	$(PY) scripts/monitor.py \
+		--reference data/splits/train.parquet \
+		--current   data/splits/test.parquet \
+		--output-dir data/reports/latest \
+		--top-k 25
+
+drift-report-evidently: ## Same as drift-report but also writes an Evidently HTML
+	$(PY) scripts/monitor.py \
+		--reference data/splits/train.parquet \
+		--current   data/splits/test.parquet \
+		--output-dir data/reports/latest \
+		--with-evidently \
+		--top-k 25
+
+grafana-open: ## Open the local Grafana dashboard (after `make compose-up`)
+	@echo "Grafana: http://localhost:3000  (admin / admin)"
+
+prometheus-open: ## Open the local Prometheus UI (after `make compose-up`)
+	@echo "Prometheus: http://localhost:9090"
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 clean: ## Remove caches and build artifacts
@@ -238,3 +263,7 @@ tag-phase-5: ## Tag v0.5.0-agent-investigator
 tag-phase-6: ## Tag v0.6.0-dashboard
 	git tag -a v0.6.0-dashboard -m "Phase 6: React Dashboard"
 	@echo "Tag created. Push with: git push origin v0.6.0-dashboard"
+
+tag-phase-7: ## Tag v0.7.0-mlops
+	git tag -a v0.7.0-mlops -m "Phase 7: MLOps & Monitoring"
+	@echo "Tag created. Push with: git push origin v0.7.0-mlops"

@@ -9,7 +9,7 @@ on:
 
 jobs:
   lint-and-test:
-    name: Lint + unit tests
+    name: Python lint + tests (Py ${{ matrix.python-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -26,17 +26,19 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
-      - name: Install package (dev + train + serve + agent extras, CPU-only torch)
+      - name: Install package (dev + train + serve + agent + monitor extras, CPU-only torch)
         # The ``train`` extras pull in PyTorch. By default pip picks the
         # CUDA wheel which is ~2GB; we want the CPU wheel for CI speed.
         # ``serve`` adds Ray Serve, confluent-kafka, SHAP, prometheus-client
         # and websockets so the Phase 4 serving tests can import them.
         # ``agent`` adds LangGraph, LangChain, langchain-ollama, langfuse,
-        # faiss-cpu and neo4j for the Phase 5 investigator.
+        # faiss-cpu and neo4j for the Phase 5 investigator. ``monitor``
+        # pulls in Evidently + prometheus-client for the Phase 7 drift
+        # and monitoring tests.
         run: |
           python -m pip install --upgrade pip
           pip install --extra-index-url https://download.pytorch.org/whl/cpu "torch>=2.10,<2.11"
-          pip install -e ".[dev,train,serve,agent]"
+          pip install -e ".[dev,train,serve,agent,monitor]"
 
       - name: Lint (ruff)
         run: |
@@ -53,3 +55,100 @@ jobs:
         with:
           name: coverage-xml
           path: coverage.xml
+
+  dashboard:
+    name: Dashboard lint + tests (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ["20", "22"]
+    # The dashboard is a Phase 6 deliverable but its CI job lands in Phase 7
+    # alongside the rest of the MLOps surface.
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+
+      - name: Install dashboard dependencies
+        working-directory: dashboard
+        run: npm ci || npm install
+
+      - name: Type-check
+        working-directory: dashboard
+        run: npx tsc -b
+
+      - name: Vitest
+        working-directory: dashboard
+        run: npm test -- --run
+
+      - name: Production build
+        working-directory: dashboard
+        run: npm run build
+
+  integration:
+    name: Integration tests (Docker compose smoke)
+    runs-on: ubuntu-latest
+    needs: lint-and-test
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install integration deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install --extra-index-url https://download.pytorch.org/whl/cpu "torch>=2.10,<2.11"
+          pip install -e ".[dev,serve,monitor]"
+
+      - name: Validate Prometheus rules
+        uses: docker://prom/prometheus:v2.55.1
+        with:
+          args: promtool check rules /github/workspace/configs/prometheus_rules.yml
+
+      - name: Validate Grafana dashboards (JSON parse)
+        run: |
+          python - <<'PY'
+          import json, pathlib, sys
+          ok = True
+          for p in pathlib.Path("configs/grafana/dashboards").glob("*.json"):
+              try:
+                  data = json.loads(p.read_text())
+                  assert "panels" in data, f"{p}: missing 'panels'"
+                  assert data.get("uid"), f"{p}: missing 'uid'"
+                  print(f"OK   {p}  ({len(data['panels'])} panels, uid={data['uid']})")
+              except Exception as exc:  # noqa: BLE001
+                  ok = False
+                  print(f"FAIL {p}: {exc}", file=sys.stderr)
+          sys.exit(0 if ok else 1)
+          PY
+
+      - name: Boot the API and run smoke probes
+        run: |
+          uvicorn fraud_detection.serving.app:app --host 127.0.0.1 --port 8000 &
+          SERVER_PID=$!
+          # Wait for the app to come up (lifespan + monitoring init).
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:8000/api/v1/health >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          curl -sSf http://127.0.0.1:8000/api/v1/health | tee /dev/stderr
+          curl -sSf http://127.0.0.1:8000/api/v1/metrics | head -20 || true
+          curl -sSf http://127.0.0.1:8000/api/v1/monitoring/drift | head -5 || true
+          curl -sSf http://127.0.0.1:8000/api/v1/monitoring/performance | head -5 || true
+          curl -sSf http://127.0.0.1:8000/api/v1/monitoring/alerts | head -5 || true
+          curl -sSf http://127.0.0.1:8000/api/v1/monitoring/shadow | head -5 || true
+          kill $SERVER_PID || true
