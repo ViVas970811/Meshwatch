@@ -1,0 +1,136 @@
+name: Promote model
+
+# Manual workflow that promotes a candidate model from MLflow to a
+# deployed alias (default: ``production``). Mirrors the Phase 7 plan's
+# "manual model promotion workflow" requirement.
+#
+# Inputs:
+#   run_id      MLflow run that produced the model artifact.
+#   version     Registry version of the model (printed by `train.py`).
+#   alias       Registry alias to apply (default: production).
+#   tracking_uri  MLflow tracking URI. Defaults to file:./mlflow.db so it
+#                 round-trips locally without a server. In production set
+#                 this to the deployed tracking server.
+#
+# This intentionally runs **only on workflow_dispatch** so a human is
+# always in the loop. The job also writes a Markdown summary to the run.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "MLflow run ID of the candidate model"
+        required: true
+        type: string
+      version:
+        description: "Model registry version (e.g. 12)"
+        required: true
+        type: string
+      alias:
+        description: "Registry alias to promote to (production, challenger, ...)"
+        required: false
+        default: "production"
+        type: string
+      tracking_uri:
+        description: "MLflow tracking URI"
+        required: false
+        default: "sqlite:///mlflow.db"
+        type: string
+      model_name:
+        description: "Registered model name"
+        required: false
+        default: "meshwatch-ensemble"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.model_name }} v${{ inputs.version }} -> ${{ inputs.alias }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install package + MLflow
+        run: |
+          python -m pip install --upgrade pip
+          pip install "mlflow>=2.16"
+
+      - name: Inspect candidate run
+        env:
+          MLFLOW_TRACKING_URI: ${{ inputs.tracking_uri }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          import mlflow
+
+          run_id = "${{ inputs.run_id }}"
+          client = mlflow.tracking.MlflowClient()
+          try:
+              run = client.get_run(run_id)
+          except Exception as exc:  # noqa: BLE001
+              print(f"::error::Could not load run {run_id}: {exc}")
+              sys.exit(1)
+
+          metrics = dict(run.data.metrics)
+          params = dict(run.data.params)
+          print("Run status:", run.info.status)
+          print("Metrics:", json.dumps(metrics, indent=2))
+          print("Params:", json.dumps(params, indent=2))
+
+          # Guard-rails: refuse to promote if the candidate's reported test
+          # AUPRC is below the Phase 7 model-degradation threshold.
+          test_auprc = float(metrics.get("test_auprc", metrics.get("auprc", 0.0)))
+          if test_auprc < 0.60:
+              print(
+                  f"::error::Candidate AUPRC {test_auprc:.3f} is below the 0.60 floor; "
+                  "refusing to promote."
+              )
+              sys.exit(2)
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a") as fh:
+                  fh.write(f"# Promotion candidate `{run_id}`\n\n")
+                  fh.write(f"- AUPRC: **{test_auprc:.4f}**\n")
+                  fh.write(f"- Params: `{json.dumps(params)}`\n\n")
+          PY
+
+      - name: Apply registry alias
+        env:
+          MLFLOW_TRACKING_URI: ${{ inputs.tracking_uri }}
+        run: |
+          python - <<'PY'
+          import os
+          import sys
+          import mlflow
+
+          model_name = "${{ inputs.model_name }}"
+          version = "${{ inputs.version }}"
+          alias = "${{ inputs.alias }}"
+
+          client = mlflow.tracking.MlflowClient()
+          try:
+              client.set_registered_model_alias(model_name, alias, version)
+          except Exception as exc:  # noqa: BLE001
+              print(f"::error::Failed to set alias '{alias}' on {model_name} v{version}: {exc}")
+              sys.exit(1)
+          print(f"Set alias '{alias}' on {model_name} v{version}.")
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_path:
+              with open(summary_path, "a") as fh:
+                  fh.write(f"## Promoted\n\n`{model_name}` v{version} -> alias **{alias}**\n")
+          PY

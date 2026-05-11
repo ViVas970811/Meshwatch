@@ -6,13 +6,14 @@
 > Serve, and auto-investigates alerts with a LangGraph agent. A React
 > dashboard visualises the fraud network. Built on IEEE-CIS (590K transactions).
 
-[![Phase](https://img.shields.io/badge/phase-6%2F8-blue)](./Fraud_Detection_GNN_Implementation_Plan.pdf)
+[![Phase](https://img.shields.io/badge/phase-7%2F8-blue)](./Fraud_Detection_GNN_Implementation_Plan.pdf)
 [![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
-[![Tests](https://img.shields.io/badge/tests-299%20%2B%2032-success)]()
+[![Tests](https://img.shields.io/badge/tests-403%20%2B%2032-success)]()
 [![Latency](https://img.shields.io/badge/predict-P95%201.6ms-success)]()
 [![Agent](https://img.shields.io/badge/investigate-%3C50ms-success)]()
 [![Dashboard](https://img.shields.io/badge/dashboard-Vite%206-blue)]()
+[![Monitoring](https://img.shields.io/badge/monitoring-Prometheus%20%2B%20Grafana-orange)]()
 
 Production-grade fraud detection on the **IEEE-CIS** dataset (590,540 transactions, 3.5% fraud rate)
 combining a **heterogeneous GNN** (PyTorch Geometric) with an **XGBoost ensemble**, served in
@@ -94,6 +95,28 @@ make dashboard-build      # production bundle -> dashboard/dist/
 # OR run dashboard alongside the rest of the stack:
 make compose-up           # api + dashboard + redis + kafka + mlflow + prometheus + grafana
 #                         # dashboard at http://localhost:5173, api at http://localhost:8000
+
+# 10. Phase 7: MLOps + monitoring (drift / performance / Prometheus / Grafana)
+make drift-report         # PSI/KS/chi2/JSD report -> data/reports/latest/drift.{json,html}
+make drift-report-evidently # same + an Evidently HTML report (needs [monitor] extra)
+make compose-up           # boots Prometheus (with alert rules) + Grafana (with the
+#                         # Meshwatch MLOps dashboard auto-provisioned)
+make grafana-open         # http://localhost:3000  (admin / admin)
+make prometheus-open      # http://localhost:9090
+# Endpoints (live on the FastAPI app):
+#   GET  /api/v1/monitoring/drift          -- last drift report (JSON)
+#   GET  /api/v1/monitoring/drift.html     -- the same report rendered as HTML
+#   GET  /api/v1/monitoring/performance    -- rolling precision/recall/F1/AUROC
+#   GET  /api/v1/monitoring/alerts         -- mirror of Prometheus rules (incl. FraudRateSpike, ModelDegradation)
+#   POST /api/v1/monitoring/label          -- attach a chargeback label to a previous txn
+#   GET  /api/v1/monitoring/shadow         -- champion/challenger agreement summary
+#   GET  /api/v1/monitoring/shadow/recent  -- recent shadow decisions
+
+# Grafana auto-provisions 4 dashboards at startup:
+#   * Meshwatch -- Operational         (RPS, latency, error rate, alert volume)
+#   * Meshwatch -- Model Performance   (PSI, precision/recall, AUC, label drift)
+#   * Meshwatch -- Agent Analytics     (LangGraph investigations, tool failures)
+#   * Meshwatch -- Infrastructure      (shadow agreement, in-flight, status codes)
 ```
 
 ---
@@ -105,7 +128,12 @@ Meshwatch/
 ├── .github/workflows/        # CI (lint + tests across Py 3.10 / 3.11 / 3.12)
 ├── configs/
 │   ├── base.yaml             # project-wide settings
-│   └── feast/                # feature store config + feature views
+│   ├── feast/                # feature store config + feature views
+│   ├── prometheus.yml        # Prometheus scrape config (Phase 4)
+│   ├── prometheus_rules.yml  # alert rules (Phase 7)
+│   └── grafana/
+│       ├── provisioning/     # auto-load datasource + dashboard provider
+│       └── dashboards/       # 4 dashboards: operational / model / agent / infra
 ├── data/                     # raw / processed / splits / graphs (gitignored)
 ├── notebooks/
 │   ├── 01_eda.ipynb              # Phase 1 -- raw-data EDA
@@ -123,7 +151,8 @@ Meshwatch/
 │   ├── evaluate.py               # Phase 3: PR/ROC/calibration on val or test
 │   ├── serve.py                  # Phase 4: FastAPI / Ray Serve launcher
 │   ├── demo_stream.py            # Phase 4: replay txns to /api/v1/predict
-│   └── investigate.py            # Phase 5: run the LangGraph investigator on a synthetic alert
+│   ├── investigate.py            # Phase 5: run the LangGraph investigator on a synthetic alert
+│   └── monitor.py                # Phase 7: compute a drift report between two splits
 ├── dashboard/                    # Phase 6: React 18 + TS + Vite frontend
 │   ├── src/{api,components,pages,store,lib}/
 │   ├── tests/                    # 32 Vitest tests
@@ -137,7 +166,7 @@ Meshwatch/
 │   ├── serving/              # FastAPI app, Ray Serve deployment, schemas   (Phase 4)
 │   ├── streaming/            # Kafka producer/consumer                      (Phase 4)
 │   ├── agent/                # LangGraph agent, 8 tools, prompts            (Phase 5)
-│   ├── monitoring/           # Evidently drift, Prometheus metrics          (Phase 7)
+│   ├── monitoring/           # drift + perf + alerts + Prometheus registry (Phase 7)
 │   └── utils/                # config, logging, timing
 ├── tests/{unit,integration,e2e}/
 ├── pyproject.toml
@@ -155,7 +184,7 @@ Python (backend, agent, training):
 make lint            # ruff check
 make format          # ruff format + autofix
 make typecheck       # mypy
-make test            # pytest unit tests (299 tests, ~50 s)
+make test            # pytest unit tests (403 tests, ~50 s)
 make test-cov        # unit tests with coverage report
 ```
 
@@ -167,9 +196,20 @@ make dashboard-test  # vitest run (32 tests)
 make dashboard-build # production Vite bundle -> dashboard/dist/
 ```
 
-CI runs the full Python matrix (Python 3.10 / 3.11 / 3.12) on every push + PR
-via `.github/workflows/ci.yml`. The dashboard test suite is run locally; a
-dedicated CI job lands in Phase 7 alongside the MLOps work.
+CI runs the full Python matrix (Python 3.10 / 3.11 / 3.12) on every push +
+PR via `.github/workflows/ci.yml`. Phase 7 added two more jobs:
+
+* `dashboard` -- the dashboard's TypeScript type-check, Vitest suite, and
+  production build on Node 20 / 22.
+* `integration` -- validates `configs/prometheus_rules.yml` with
+  `promtool check rules`, parses every Grafana dashboard JSON, and runs a
+  smoke probe against the live API (`/health`, `/metrics`,
+  `/monitoring/{drift,performance,alerts,shadow}`).
+
+A separate manual workflow at `.github/workflows/promote-model.yml`
+promotes a candidate model from MLflow to the `production` alias. It
+refuses to promote if the candidate run's `test_auprc` is below `0.60`
+(the Phase 7 `ModelDegradation` floor).
 
 ---
 
@@ -183,8 +223,8 @@ dedicated CI job lands in Phase 7 alongside the MLOps work.
 | 4. Real-Time Serving | `v0.4.0-serving-pipeline` | ✅ Complete |
 | 5. Agentic Investigator | `v0.5.0-agent-investigator` | ✅ Complete |
 | 6. React Dashboard | `v0.6.0-dashboard` | ✅ Complete |
-| 7. MLOps & Monitoring | `v0.7.0-mlops` | 🚧 Up next |
-| 8. Docs, Demo & Polish | `v1.0.0-release` | ⏳ Planned |
+| 7. MLOps & Monitoring | `v0.7.0-mlops` | ✅ Complete |
+| 8. Docs, Demo & Polish | `v1.0.0-release` | 🚧 Up next |
 
 ## License
 

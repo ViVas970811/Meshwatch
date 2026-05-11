@@ -1,0 +1,235 @@
+# Meshwatch Prometheus alert rules (Phase 7).
+#
+# These mirror the application-side rules in
+# src/fraud_detection/monitoring/alerts.py so dashboards (Grafana) and
+# the application's /api/v1/monitoring/alerts endpoint stay aligned.
+#
+# Severity convention:
+#   * critical  -- pages oncall, requires human action
+#   * warning   -- informational; auto-resolves when condition clears
+#
+# Threshold sources (see Fraud_Detection_GNN_Implementation_Plan.pdf, p. 11):
+#   * HighLatency:    P95 > 50ms (the Phase 4 latency budget)
+#   * FraudRateSpike: production fraud rate > 10%
+#   * DataDrift:      > 10 features with PSI >= alert threshold
+#   * ModelDegradation: production AUPRC < 0.60 (was 0.70 at training)
+#
+# All rules use the meshwatch_* metric namespace exposed by the API at
+# /api/v1/metrics. The scrape config lives in configs/prometheus.yml.
+
+groups:
+  - name: meshwatch.serving
+    interval: 30s
+    rules:
+      - alert: ModelNotLoaded
+        expr: absent(meshwatch_http_requests_total{path="/api/v1/predict"}) == 1
+        for: 2m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "Meshwatch model is not serving predictions"
+          description: |
+            No requests have been scraped for /api/v1/predict in the last 2 minutes.
+            The FraudPredictor may have failed to load at startup; check
+            the api container logs for "predictor_load_failed".
+
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(meshwatch_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(meshwatch_http_requests_total[5m]))
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "5xx error rate > 5% on /api/v1"
+          description: |
+            HTTP 5xx rate has been above 5% for the last 5 minutes.
+            Inspect ``meshwatch_http_requests_total`` by path/status and
+            the predictor logs.
+
+      - alert: HighLatency
+        # Plan budget: P95 < 50ms on /api/v1/predict (see Phase 4, page 9).
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(meshwatch_http_request_latency_seconds_bucket{path=~"/api/v1/predict.*"}[5m])) by (le)
+          ) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "P95 inference latency exceeded the 50ms budget"
+          description: |
+            P95 latency on /api/v1/predict has been above the 50ms budget
+            for 10 minutes. The Phase 4 latency budget is 50ms.
+
+  - name: meshwatch.fraud_signal
+    interval: 1m
+    rules:
+      - alert: FraudRateSpike
+        # Plan threshold: alert when the production fraud rate climbs past 10%.
+        # Training-time rate is 3.5%; sustained > 10% is either a real attack
+        # or a model-side bug worth paging on.
+        expr: meshwatch_production_fraud_rate > 0.10
+        for: 5m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "Production fraud rate spike (> 10%)"
+          description: |
+            ``meshwatch_production_fraud_rate`` has stayed above 10% for
+            5 minutes (training baseline = 3.5%). Either there is an
+            ongoing attack, or the model's calibration has drifted.
+
+      - alert: LabelDriftHigh
+        expr: meshwatch_label_drift > 0.05
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Label drift > 5 percentage points"
+          description: |
+            |production - reference| fraud rate > 0.05. Combined with a
+            data-drift signal, this often indicates retraining is overdue.
+
+  - name: meshwatch.drift
+    interval: 1m
+    rules:
+      - alert: DataDriftSevere
+        expr: meshwatch_drift_psi_overall >= 0.25
+        for: 10m
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "Severe data drift detected (overall PSI {{ $value | printf \"%.3f\" }})"
+          description: |
+            Overall PSI between training and production has been >= 0.25
+            for 10 minutes. Inspect ``meshwatch_drift_psi_feature`` for
+            the worst offenders, and consider re-training the ensemble.
+
+      - alert: DataDriftModerate
+        expr: meshwatch_drift_psi_overall >= 0.10 and meshwatch_drift_psi_overall < 0.25
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Moderate data drift (overall PSI {{ $value | printf \"%.3f\" }})"
+          description: |
+            Overall PSI is in the [0.10, 0.25) band. Worth investigating
+            but not yet pageable.
+
+      - alert: DataDrift
+        # Plan threshold: > 10 features with severe drift.
+        expr: meshwatch_drift_features_severe > 10
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "More than 10 features show severe drift"
+          description: |
+            ``meshwatch_drift_features_severe`` has been > 10 for 30 minutes.
+            Even if the overall PSI is low this suggests a coordinated
+            distribution shift across multiple feature families.
+
+      - alert: PredictionDistributionDrift
+        expr: meshwatch_prediction_distribution_drift >= 0.25
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Score distribution drifted vs. reference"
+          description: |
+            PSI between production score distribution and the reference
+            baseline is at or above 0.25. The model is making predictions
+            with a different shape than at calibration time.
+
+  - name: meshwatch.performance
+    interval: 5m
+    rules:
+      - alert: ModelDegradation
+        # Plan threshold: production AUPRC < 0.60 (training baseline 0.70).
+        expr: meshwatch_performance_auprc < 0.60 and meshwatch_performance_n_labelled > 50
+        for: 1h
+        labels:
+          severity: critical
+          team: ml-platform
+        annotations:
+          summary: "Production AUPRC below 0.60"
+          description: |
+            AUPRC on labelled production transactions has been below 0.60
+            for an hour. The Phase 3 ensemble baseline is 0.70 -- this is
+            a clear degradation signal.
+
+      - alert: ModelPerformanceDegraded
+        expr: meshwatch_performance_recall < 0.55 and meshwatch_performance_n_labelled > 50
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Production recall < 0.55"
+          description: |
+            Recall on labelled production transactions has stayed below
+            0.55 for 30 minutes.
+
+      - alert: ProductionAUROCDrop
+        expr: meshwatch_performance_auroc < 0.85 and meshwatch_performance_n_labelled > 50
+        for: 1h
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Production AUROC below 0.85"
+          description: |
+            AUROC on labelled production transactions has been below 0.85
+            for an hour. The Phase 3 test-set AUROC was 0.92.
+
+  - name: meshwatch.agent
+    interval: 1m
+    rules:
+      - alert: AgentInvestigationsFailing
+        expr: |
+          (
+            sum(rate(meshwatch_agent_invocations_total{status="error"}[10m]))
+            /
+            clamp_min(sum(rate(meshwatch_agent_invocations_total[10m])), 0.001)
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Agent investigation failure rate > 10%"
+          description: |
+            More than 10% of agent investigations are erroring out.
+            Check ``meshwatch_agent_tool_invocations_total{status="error"}``
+            to identify the failing tool.
+
+  - name: meshwatch.shadow
+    interval: 1m
+    rules:
+      - alert: ShadowChallengerDisagreement
+        expr: meshwatch_shadow_agreement_rate < 0.90
+        for: 30m
+        labels:
+          severity: warning
+          team: ml-platform
+        annotations:
+          summary: "Champion / challenger agreement rate < 90%"
+          description: |
+            The shadow challenger disagrees with the champion on more
+            than 10% of recent transactions. Inspect
+            ``/api/v1/monitoring/shadow/recent`` for examples before
+            promoting the challenger.

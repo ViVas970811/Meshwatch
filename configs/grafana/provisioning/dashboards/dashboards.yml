@@ -1,0 +1,20 @@
+# Grafana dashboard provisioning (Phase 7).
+#
+# Tells Grafana to load every JSON dashboard from /var/lib/grafana/dashboards
+# (mounted from configs/grafana/dashboards/ in docker-compose.yml) at
+# startup. ``allowUiUpdates`` is on so operators can iterate, but
+# foldersFromFilesStructure keeps the file/folder hierarchy in source.
+
+apiVersion: 1
+
+providers:
+  - name: meshwatch
+    orgId: 1
+    folder: Meshwatch
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

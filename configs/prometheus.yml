@@ -1,8 +1,8 @@
-# Prometheus scrape config for the Meshwatch infrastructure (Phase 4).
+# Prometheus scrape config for the Meshwatch infrastructure (Phases 4 + 7).
 #
 # Scrapes the FastAPI app's /api/v1/metrics endpoint and Prometheus's own
-# self-metrics. Phase 7 adds drift / model-degradation alert rules in
-# configs/prometheus_rules.yml.
+# self-metrics. Phase 7 added the alert rules referenced via ``rule_files``;
+# the matching Grafana dashboard lives in ``configs/grafana/dashboards``.
 
 global:
   scrape_interval: 15s
@@ -10,6 +10,9 @@ global:
   external_labels:
     service: meshwatch
     env: local
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
 
 scrape_configs:
   - job_name: prometheus
