@@ -6,12 +6,14 @@
 > Serve, and auto-investigates alerts with a LangGraph agent. A React
 > dashboard visualises the fraud network. Built on IEEE-CIS (590K transactions).
 
-[![Phase](https://img.shields.io/badge/phase-7%2F8-blue)](./Fraud_Detection_GNN_Implementation_Plan.pdf)
+[![Phase](https://img.shields.io/badge/phase-8%2F8-success)](./Fraud_Detection_GNN_Implementation_Plan.pdf)
+[![Release](https://img.shields.io/badge/release-v1.0.0-blue)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
-[![Tests](https://img.shields.io/badge/tests-403%20%2B%2032-success)]()
+[![Tests](https://img.shields.io/badge/tests-445%20%2B%2032-success)]()
+[![Coverage](https://img.shields.io/badge/coverage-87%25-success)]()
 [![Latency](https://img.shields.io/badge/predict-P95%201.6ms-success)]()
-[![Agent](https://img.shields.io/badge/investigate-%3C50ms-success)]()
+[![Agent](https://img.shields.io/badge/investigate-stub%2050ms%20%2F%20ollama%2028s-blue)]()
 [![Dashboard](https://img.shields.io/badge/dashboard-Vite%206-blue)]()
 [![Monitoring](https://img.shields.io/badge/monitoring-Prometheus%20%2B%20Grafana-orange)]()
 
@@ -20,9 +22,96 @@ combining a **heterogeneous GNN** (PyTorch Geometric) with an **XGBoost ensemble
 real time (<50ms P95) via FastAPI + Ray Serve + Kafka, and investigated automatically by a
 **LangGraph agent** backed by a local Ollama LLM. Results surface in a React.js dashboard.
 
-> See [Fraud_Detection_GNN_Implementation_Plan.pdf](./Fraud_Detection_GNN_Implementation_Plan.pdf)
-> for the complete 8-phase roadmap. Current status is in the
-> [Roadmap section](#roadmap) at the bottom of this file.
+> Phase 8 is complete -- the system is at the `v1.0.0-release` tag. See
+> [Fraud_Detection_GNN_Implementation_Plan.pdf](./Fraud_Detection_GNN_Implementation_Plan.pdf)
+> for the full 8-phase plan, [docs/BENCHMARKS.md](./docs/BENCHMARKS.md) for
+> the latest numbers, and the [Roadmap section](#roadmap) for status.
+
+## Key results
+
+| Surface                                | Number                        |
+| :--                                    | ---:                          |
+| Ensemble **AUPRC**                     | **0.7263** (test split)       |
+| Ensemble **AUROC**                     | 0.9347                        |
+| Ensemble **Precision @ 5%**            | 0.681                         |
+| `/api/v1/predict` **P95 latency**      | **1.6 ms** (50 ms budget)     |
+| Throughput, batch endpoint             | ~12,200 rps @ size 50         |
+| Agent (stub LLM) round-trip            | 28-62 ms across all 3 depths  |
+| Agent (Ollama `llama3.1:8b`)           | 4-28 s depending on depth     |
+| `docker compose up` to demo URL        | ~62 s on a warm cache         |
+| Tests (Python + dashboard)             | **487** total -- 87% coverage |
+
+Full breakdown + reproduction commands in [docs/BENCHMARKS.md](./docs/BENCHMARKS.md).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    subgraph Ingest["Ingest"]
+        K[Kafka topic]
+        D[scripts/demo.py]
+    end
+
+    subgraph Serve["Real-time scoring (Phase 4)"]
+        API[FastAPI + Ray Serve]
+        R[(Redis<br/>embedding cache)]
+        F[(Feast<br/>online features)]
+    end
+
+    subgraph Model["Model (Phase 3)"]
+        GNN[Heterogeneous GNN<br/>SAGEConv + GAT]
+        XGB[XGBoost<br/>ensemble]
+    end
+
+    subgraph Agent["Investigator (Phase 5)"]
+        LG[LangGraph<br/>state machine]
+        T[8 tools<br/>incl. GraphRAG]
+        OLL[Ollama LLM<br/>llama3.1:8b]
+    end
+
+    subgraph Surfaces["Surfaces"]
+        DASH[React dashboard<br/>Vite + force-graph]
+        WS[/ws/alerts/]
+        GRAF[Grafana<br/>4 dashboards]
+        MLF[MLflow]
+    end
+
+    subgraph Ops["MLOps (Phase 7)"]
+        DRIFT[DriftDetector<br/>PSI/KS/JSD]
+        SHADOW[ShadowDeployment<br/>champion/challenger]
+        PROM[Prometheus<br/>+ alert rules]
+    end
+
+    K -->|alert| API
+    D -.replay 1k txns.-> API
+    API --> F
+    API --> R
+    R --> XGB
+    F --> XGB
+    GNN -->|64-d embedding| XGB
+    XGB -->|FraudPrediction| API
+    API -->|alert >= 0.7| WS
+    API -->|alert| LG
+    LG --> T
+    T --> OLL
+    OLL -->|narrative| LG
+    LG -->|InvestigationReport| API
+
+    API --> DASH
+    WS --> DASH
+    DASH --> GRAF
+    API -->|/metrics| PROM
+    PROM --> GRAF
+    GNN --- MLF
+    XGB --- MLF
+    API --> DRIFT
+    API --> SHADOW
+    SHADOW --> PROM
+    DRIFT --> PROM
+```
+
+> Mermaid renders natively on GitHub. The same diagram lives in
+> [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) with a deeper walk-through.
 
 ---
 
@@ -117,6 +206,15 @@ make prometheus-open      # http://localhost:9090
 #   * Meshwatch -- Model Performance   (PSI, precision/recall, AUC, label drift)
 #   * Meshwatch -- Agent Analytics     (LangGraph investigations, tool failures)
 #   * Meshwatch -- Infrastructure      (shadow agreement, in-flight, status codes)
+
+# 11. Phase 8: end-to-end demo + security hardening
+make demo                 # boots / verifies API, replays 1000 txns, runs agent,
+                          # prints latency P50/P95/P99 + monitoring snapshot
+
+# Lock down the API with API key auth + 100 rps token-bucket rate limiting:
+export FRAUD_API_KEYS=prod-key-1,prod-key-2
+export FRAUD_RATE_LIMIT_RPS=100
+make serve                # auth-required; /health + /metrics stay exempt
 ```
 
 ---
@@ -152,7 +250,8 @@ Meshwatch/
 │   ├── serve.py                  # Phase 4: FastAPI / Ray Serve launcher
 │   ├── demo_stream.py            # Phase 4: replay txns to /api/v1/predict
 │   ├── investigate.py            # Phase 5: run the LangGraph investigator on a synthetic alert
-│   └── monitor.py                # Phase 7: compute a drift report between two splits
+│   ├── monitor.py                # Phase 7: compute a drift report between two splits
+│   └── demo.py                   # Phase 8: end-to-end demo (replay 1000 txns + agent + monitoring)
 ├── dashboard/                    # Phase 6: React 18 + TS + Vite frontend
 │   ├── src/{api,components,pages,store,lib}/
 │   ├── tests/                    # 32 Vitest tests
@@ -163,10 +262,10 @@ Meshwatch/
 │   ├── features/             # temporal, aggregated, graph_features, pipeline
 │   ├── models/               # hetero_gnn, gnn_layers, xgboost_model, ensemble, losses
 │   ├── training/             # trainer, callbacks, evaluator
-│   ├── serving/              # FastAPI app, Ray Serve deployment, schemas   (Phase 4)
+│   ├── serving/              # FastAPI app, Ray Serve, schemas, security   (Phase 4 + 8)
 │   ├── streaming/            # Kafka producer/consumer                      (Phase 4)
 │   ├── agent/                # LangGraph agent, 8 tools, prompts            (Phase 5)
-│   ├── monitoring/           # drift + perf + alerts + Prometheus registry (Phase 7)
+│   ├── monitoring/           # drift + perf + alerts + shadow + registry   (Phase 7)
 │   └── utils/                # config, logging, timing
 ├── tests/{unit,integration,e2e}/
 ├── pyproject.toml
@@ -213,6 +312,53 @@ refuses to promote if the candidate run's `test_auprc` is below `0.60`
 
 ---
 
+## Security
+
+Phase 8 adds defence-in-depth around the API:
+
+* **API-key authentication** -- set `FRAUD_API_KEYS=key1,key2,...` to lock
+  every endpoint except `/api/v1/health`, `/api/v1/metrics`, `/docs`,
+  and `/openapi.json` behind an `X-API-Key` header (or
+  `Authorization: Bearer <key>`). Missing key → `401`; wrong key → `403`.
+* **Token-bucket rate limiting** -- 100 requests/second per identity by
+  default (`FRAUD_RATE_LIMIT_RPS`, `FRAUD_RATE_LIMIT_BURST`). Identity is
+  the API key if present, otherwise the client IP. Health + metrics are
+  exempt so monitoring scrapers don't get throttled. Set
+  `FRAUD_RATE_LIMIT_DISABLED=true` for local dev.
+* **Strict input validation** -- every request body is a Pydantic v2
+  model (`fraud_detection.serving.schemas`); unknown fields are
+  tolerated, but type / range constraints are enforced before the
+  predictor sees the row.
+* **Parameterised Neo4j queries** -- the Phase 5 graph adapter uses
+  parameter bindings only (no string interpolation), so the agent can't
+  be tricked into injecting Cypher via a tampered transaction ID.
+* **CORS** -- defaults to the local Vite origin
+  (`http://localhost:5173`); override with `FRAUD_CORS_ORIGINS` (comma-
+  separated, `*` allowed for fully open dev boxes).
+* **Secrets in env, not the repo** -- `.env.example` ships only
+  placeholders; `.gitignore` excludes `.env`. CI does not echo any
+  secret-shaped value.
+
+## Demo
+
+The plan's "one-command tour" is `scripts/demo.py`:
+
+```bash
+docker compose up -d              # API + Redis + Kafka + Grafana
+make demo                         # replay 1000 synthetic txns,
+                                  # trigger the agent on the top alert,
+                                  # print monitoring snapshot
+```
+
+The demo synthesises a realistic distribution when no real parquet is
+available, so it runs on a freshly cloned repo. Pass `--input
+data/graphs/features.parquet` to replay real IEEE-CIS rows once you've
+run `make build-graph`.
+
+Latency, throughput, AUPRC, and the cold-start budget for
+`docker compose up` are tracked in [docs/BENCHMARKS.md](./docs/BENCHMARKS.md);
+the architecture is laid out in [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md).
+
 ## Roadmap
 
 | Phase | Tag | Status |
@@ -224,7 +370,7 @@ refuses to promote if the candidate run's `test_auprc` is below `0.60`
 | 5. Agentic Investigator | `v0.5.0-agent-investigator` | ✅ Complete |
 | 6. React Dashboard | `v0.6.0-dashboard` | ✅ Complete |
 | 7. MLOps & Monitoring | `v0.7.0-mlops` | ✅ Complete |
-| 8. Docs, Demo & Polish | `v1.0.0-release` | 🚧 Up next |
+| 8. Docs, Demo & Polish | `v1.0.0-release` | ✅ Complete |
 
 ## License
 

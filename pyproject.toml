@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fraud-detection-gnn"
-version = "0.7.0"
+version = "1.0.0"
 description = "Real-time transaction fraud detection using heterogeneous GNNs + agentic LLM investigation."
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["fraud-detection", "gnn", "pytorch-geometric", "langgraph", "mlops"]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
@@ -185,6 +185,9 @@ branch = true
 omit = [
     "*/tests/*",
     "*/__init__.py",
+    # Ray Serve deployment glue -- only exercised when a Ray cluster is up;
+    # unit tests cannot reach it without standing up the cluster.
+    "*/serving/ray_deployment.py",
 ]
 
 [tool.coverage.report]

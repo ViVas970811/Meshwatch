@@ -51,6 +51,7 @@ from fraud_detection.serving.schemas import (
     ModelInfoResponse,
     TransactionRequest,
 )
+from fraud_detection.serving.security import configure_security
 from fraud_detection.streaming.kafka_consumer import FraudAlertConsumer
 from fraud_detection.streaming.kafka_producer import FraudAlertProducer
 from fraud_detection.utils.logging import configure_logging, get_logger
@@ -267,7 +268,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Meshwatch Fraud Detection",
-        version="v0.7.0-mlops",
+        version="v1.0.0-release",
         description="Real-time GNN+XGBoost fraud-detection inference API.",
         lifespan=lifespan,
     )
@@ -288,6 +289,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(RequestTimingMiddleware)
+    # Phase 8 -- API-key auth + token-bucket rate limiting. Both are
+    # configured from environment variables so dev keeps no-op behaviour
+    # while prod can lock things down with FRAUD_API_KEYS=key1,key2.
+    configure_security(app)
     _register_routes(app)
     return app
 
