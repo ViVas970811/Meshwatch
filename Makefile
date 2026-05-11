@@ -26,8 +26,9 @@ TEST_DIR := tests
         dashboard-install dashboard-dev dashboard-build dashboard-test dashboard-lint dashboard-preview \
         docker-build-dashboard \
         drift-report drift-report-evidently grafana-open prometheus-open \
+        demo demo-skip-investigate benchmark security-scan test-integration \
         clean clean-data clean-all \
-        tag-phase-1 tag-phase-2 tag-phase-3 tag-phase-4 tag-phase-5 tag-phase-6 tag-phase-7
+        tag-phase-1 tag-phase-2 tag-phase-3 tag-phase-4 tag-phase-5 tag-phase-6 tag-phase-7 tag-release
 
 help: ## Show this help
 	@echo "Fraud Detection GNN -- common targets"
@@ -225,6 +226,26 @@ prometheus-open: ## Open the local Prometheus UI (after `make compose-up`)
 	@echo "Prometheus: http://localhost:9090"
 
 # ---------------------------------------------------------------------------
+# Demo + benchmarks (Phase 8)
+# ---------------------------------------------------------------------------
+demo: ## End-to-end demo: replay 1000 txns, trigger agent, print monitoring snapshot
+	$(PY) scripts/demo.py --n 1000 --rps 50
+
+demo-skip-investigate: ## Same as `demo` but skips the agent investigation step
+	$(PY) scripts/demo.py --n 1000 --rps 50 --skip-investigate
+
+benchmark: ## Stress test: 2000 txns @ 50 RPS via /api/v1/predict/batch
+	$(PY) scripts/demo_stream.py --n 2000 --rps 50 --batch 50 --summary-only
+
+security-scan: ## Quick regex scan for accidentally-committed secrets
+	@echo "Scanning tracked files for credential patterns..."
+	@! git ls-files | xargs grep -lE "(AKIA[0-9A-Z]{16}|BEGIN (RSA\|EC\|DSA\|OPENSSH\|PGP) PRIVATE KEY|ghp_[a-zA-Z0-9]{30,}|xoxb-[a-zA-Z0-9-]+|AIza[0-9A-Za-z\-_]{35})" 2>/dev/null || (echo "FAIL: potential secrets found"; exit 1)
+	@echo "OK: no high-entropy credentials in tree"
+
+test-integration: ## Run the Phase 8 end-to-end integration tests (in-process)
+	$(PYTEST) tests/integration -v -m integration
+
+# ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
 clean: ## Remove caches and build artifacts
@@ -267,3 +288,7 @@ tag-phase-6: ## Tag v0.6.0-dashboard
 tag-phase-7: ## Tag v0.7.0-mlops
 	git tag -a v0.7.0-mlops -m "Phase 7: MLOps & Monitoring"
 	@echo "Tag created. Push with: git push origin v0.7.0-mlops"
+
+tag-release: ## Tag v1.0.0-release (Phase 8 done)
+	git tag -a v1.0.0-release -m "Phase 8: Docs, Demo & Polish (v1.0.0)"
+	@echo "Tag created. Push with: git push origin v1.0.0-release"

@@ -113,9 +113,16 @@ jobs:
           pip install -e ".[dev,serve,monitor]"
 
       - name: Validate Prometheus rules
-        uses: docker://prom/prometheus:v2.55.1
-        with:
-          args: promtool check rules /github/workspace/configs/prometheus_rules.yml
+        # ``uses: docker://prom/prometheus`` would invoke the image's
+        # ENTRYPOINT (``/bin/prometheus``), so ``args: promtool ...``
+        # would error with "unexpected promtool". Override the entry-
+        # point so promtool runs directly instead.
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}/configs:/configs:ro" \
+            --entrypoint /bin/promtool \
+            prom/prometheus:v2.55.1 \
+            check rules /configs/prometheus_rules.yml
 
       - name: Validate Grafana dashboards (JSON parse)
         run: |
