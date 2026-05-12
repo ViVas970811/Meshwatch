@@ -10,38 +10,64 @@
 [![Release](https://img.shields.io/badge/release-v1.0.0-blue)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
-[![Tests](https://img.shields.io/badge/tests-445%20%2B%2032-success)]()
-[![Coverage](https://img.shields.io/badge/coverage-87%25-success)]()
-[![Latency](https://img.shields.io/badge/predict-P95%201.6ms-success)]()
-[![Agent](https://img.shields.io/badge/investigate-stub%2050ms%20%2F%20ollama%2028s-blue)]()
+[![Tests](https://img.shields.io/badge/tests-438%20Py%20%2B%2032%20TS-success)]()
+[![Coverage](https://img.shields.io/badge/coverage-85%25-success)]()
+[![Latency](https://img.shields.io/badge/predict-P95%204.0ms%20(stub)-success)]()
+[![AUPRC](https://img.shields.io/badge/ensemble%20AUPRC-0.29%20(subset%20200k)-orange)]()
+[![Top1Precision](https://img.shields.io/badge/precision%20@%20top%201%25-0.70-success)]()
 [![Dashboard](https://img.shields.io/badge/dashboard-Vite%206-blue)]()
 [![Monitoring](https://img.shields.io/badge/monitoring-Prometheus%20%2B%20Grafana-orange)]()
 
 Production-grade fraud detection on the **IEEE-CIS** dataset (590,540 transactions, 3.5% fraud rate)
 combining a **heterogeneous GNN** (PyTorch Geometric) with an **XGBoost ensemble**, served in
-real time (<50ms P95) via FastAPI + Ray Serve + Kafka, and investigated automatically by a
-**LangGraph agent** backed by a local Ollama LLM. Results surface in a React.js dashboard.
+real time (under the 50ms P95 budget) via FastAPI + Ray Serve + Kafka, and investigated
+automatically by a **LangGraph agent** backed by a local Ollama LLM. Results surface in a
+React.js dashboard.
 
 > Phase 8 is complete -- the system is at the `v1.0.0-release` tag. See
 > [Fraud_Detection_GNN_Implementation_Plan.pdf](./Fraud_Detection_GNN_Implementation_Plan.pdf)
 > for the full 8-phase plan, [docs/BENCHMARKS.md](./docs/BENCHMARKS.md) for
-> the latest numbers, and the [Roadmap section](#roadmap) for status.
+> measured + target numbers (clearly tagged), and the
+> [Roadmap section](#roadmap) for status.
 
 ## Key results
 
-| Surface                                | Number                        |
-| :--                                    | ---:                          |
-| Ensemble **AUPRC**                     | **0.7263** (test split)       |
-| Ensemble **AUROC**                     | 0.9347                        |
-| Ensemble **Precision @ 5%**            | 0.681                         |
-| `/api/v1/predict` **P95 latency**      | **1.6 ms** (50 ms budget)     |
-| Throughput, batch endpoint             | ~12,200 rps @ size 50         |
-| Agent (stub LLM) round-trip            | 28-62 ms across all 3 depths  |
-| Agent (Ollama `llama3.1:8b`)           | 4-28 s depending on depth     |
-| `docker compose up` to demo URL        | ~62 s on a warm cache         |
-| Tests (Python + dashboard)             | **487** total -- 87% coverage |
+Every row is tagged ✅ **MEASURED** (verified by reproduction on the dev
+machine on 2026-05-12, in-process `TestClient` + stub predictor +
+full middleware stack) or 🎯 **TARGET** (plan acceptance criterion or
+prior-phase target that requires artifacts/a live cluster to verify).
+Full methodology + reproduction commands in
+[docs/BENCHMARKS.md](./docs/BENCHMARKS.md).
 
-Full breakdown + reproduction commands in [docs/BENCHMARKS.md](./docs/BENCHMARKS.md).
+| Surface                                | Number                                 | Tag         |
+| :--                                    | :--                                    | :--         |
+| Ensemble test AUPRC (200k subset)      | **0.2879** (plan target > 0.70)        | ✅ MEASURED |
+| Ensemble test AUROC (200k subset)      | **0.7187** (plan target > 0.90)        | ✅ MEASURED |
+| Ensemble test **Precision @ top 1%**   | **0.70** (17× the 4.15% base rate)     | ✅ MEASURED |
+| Ensemble test Precision @ top 0.1%     | **1.00**                               | ✅ MEASURED |
+| Ensemble test Precision @ top 5%       | **0.276**                              | ✅ MEASURED |
+| Ensemble test Best F1                  | **0.340** (precision 0.448 / recall 0.274) | ✅ MEASURED |
+| Ensemble val AUPRC / P@1% / P@5%       | 0.379 / 0.807 / 0.320                  | ✅ MEASURED |
+| Plan-target AUPRC on full 590k         | > 0.70 (re-run pending, see BENCHMARKS)| 🎯 TARGET   |
+| `/api/v1/predict` P95 latency          | **4.0 ms** (50 ms budget)              | ✅ MEASURED |
+| `/api/v1/predict/batch` P95 (size=50)  | **5.6 ms**                             | ✅ MEASURED |
+| Throughput, batch endpoint (size=50)   | **10,161 rps** (single thread)         | ✅ MEASURED |
+| Throughput, batch endpoint (size=100)  | **15,693 rps** (single thread)         | ✅ MEASURED |
+| Agent (stub LLM) P95 round-trip        | **6.5-8.5 ms** across all 4 depths     | ✅ MEASURED |
+| Agent (Ollama `llama3.1:8b`)           | < 30 s standard depth (plan target)    | 🎯 TARGET   |
+| `docker compose up` to demo URL        | < 3 min (plan target)                  | 🎯 TARGET   |
+| Tests, Python (unit + integration)     | **428 + 10 = 438**                     | ✅ MEASURED |
+| Tests, dashboard (Vitest)              | **32**                                 | ✅ MEASURED |
+| Coverage on `src/fraud_detection`      | **85%** statement, branch on           | ✅ MEASURED |
+
+> The MEASURED latency + throughput rows are produced by the
+> `fastapi.testclient.TestClient` (in-process httpx + asyncio bridge)
+> against a deterministic stub predictor. A real uvicorn deployment
+> behind a real ensemble adds XGBoost + optional SHAP cost
+> (typically 2-15 ms combined) but removes the TestClient overhead,
+> so the in-process numbers are a ceiling on real-network P95 plus or
+> minus the model-eval cost. Re-measure with `make demo` against a
+> running stack to refresh.
 
 ## Architecture
 
@@ -283,7 +309,7 @@ Python (backend, agent, training):
 make lint            # ruff check
 make format          # ruff format + autofix
 make typecheck       # mypy
-make test            # pytest unit tests (403 tests, ~50 s)
+make test            # pytest unit tests (428 tests, ~45 s)
 make test-cov        # unit tests with coverage report
 ```
 
