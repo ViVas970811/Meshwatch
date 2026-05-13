@@ -2,34 +2,131 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ---- base scrollbar ----------------------------------------------------- */
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-track { background: transparent; }
-*::-webkit-scrollbar-thumb { background: #2a3253; border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: #475070; }
+/* ---- typography base ---------------------------------------------------- */
+@layer base {
+  html {
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-ink-950 text-ink-100 antialiased;
+    background-image:
+      radial-gradient(at 30% -10%, rgba(99, 102, 241, 0.08), transparent 55%),
+      radial-gradient(at 80% 110%, rgba(129, 140, 248, 0.05), transparent 50%);
+    background-attachment: fixed;
+  }
+  h1,
+  h2,
+  h3,
+  h4 {
+    @apply text-ink-50;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01";
+  }
+  code {
+    @apply rounded-md bg-ink-800/80 px-1.5 py-0.5 font-mono text-[0.85em] text-ink-200 ring-1 ring-ink-700/80;
+  }
+}
 
-/* ---- card surface utility ----------------------------------------------- */
+/* ---- scrollbar ---------------------------------------------------------- */
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(45, 56, 90, 0.6);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(71, 80, 112, 0.8);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+}
+
+/* ---- focus rings: refined ---------------------------------------------- */
+@layer base {
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/60 ring-offset-2 ring-offset-ink-950;
+  }
+}
+
+/* ---- surface utilities -------------------------------------------------- */
 @layer components {
+  /* The canonical card surface. Subtle gradient sheen + soft inset highlight. */
   .surface {
-    @apply rounded-2xl bg-ink-800/70 ring-1 ring-ink-700 shadow-lg;
+    @apply relative rounded-2xl bg-ink-850/80 ring-1 ring-ink-700/80 shadow-card backdrop-blur-[2px];
+    background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0) 50%);
   }
   .surface-muted {
-    @apply rounded-2xl bg-ink-800/40 ring-1 ring-ink-700;
+    @apply rounded-2xl bg-ink-850/40 ring-1 ring-ink-700/60;
   }
   .surface-pad {
     @apply p-5;
   }
+  .surface-pad-lg {
+    @apply p-6;
+  }
+  /* Hover-lift variant for clickable cards. */
+  .surface-interactive {
+    @apply transition-all duration-200 ease-out-expo hover:-translate-y-0.5 hover:shadow-elevated hover:ring-ink-600/80;
+  }
+
+  /* ---- type helpers ----------------------------------------------------- */
+  .kicker {
+    @apply text-[10px] font-semibold uppercase tracking-kicker text-ink-400;
+  }
   .stat-label {
-    @apply text-xs uppercase tracking-wider text-ink-400;
+    @apply text-xs font-medium uppercase tracking-wider text-ink-400;
   }
   .stat-value {
-    @apply text-3xl font-semibold text-ink-100 tabular-nums;
+    @apply text-display-md font-semibold tabular-nums text-ink-50;
   }
+  .stat-delta {
+    @apply text-xs font-medium tabular-nums;
+  }
+  .page-title {
+    @apply text-display-md font-semibold text-ink-50;
+  }
+  .page-sub {
+    @apply text-sm text-ink-300;
+  }
+
+  /* ---- background ornaments -------------------------------------------- */
   .grid-bg {
     background-image:
-      radial-gradient(circle at 30% 0%, rgba(91,141,239,0.08), transparent 60%),
-      radial-gradient(circle at 80% 100%, rgba(134,171,255,0.06), transparent 50%);
+      radial-gradient(at 30% -10%, rgba(99, 102, 241, 0.1), transparent 55%),
+      radial-gradient(at 80% 110%, rgba(129, 140, 248, 0.06), transparent 50%);
+  }
+
+  /* ---- skeleton shimmer ------------------------------------------------- */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(45, 56, 90, 0.4) 0%,
+      rgba(71, 80, 112, 0.55) 50%,
+      rgba(45, 56, 90, 0.4) 100%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer rounded-md;
+  }
+
+  /* ---- gradient text ---------------------------------------------------- */
+  .text-gradient-accent {
+    background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
   }
 }
 
-html, body, #root { height: 100%; }
+html,
+body,
+#root {
+  height: 100%;
+}

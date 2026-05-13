@@ -40,11 +40,10 @@ export function CasesPage() {
   return (
     <div className="grid gap-6">
       <header>
-        <div className="text-xs uppercase tracking-widest text-ink-400">Case management</div>
-        <h1 className="text-2xl font-semibold">Investigations</h1>
-        <p className="text-sm text-ink-300">
-          Built from successful agent investigations on the Alert page. In-memory only — Phase 7
-          will persist these.
+        <div className="kicker">Case management</div>
+        <h1 className="page-title mt-1">Investigations</h1>
+        <p className="mt-1.5 page-sub">
+          Completed AI investigations and their recommended actions, ready for analyst review.
         </p>
       </header>
 

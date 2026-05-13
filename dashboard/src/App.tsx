@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo } from "react";
-import { Navigate, Route, Routes } from "react-router-dom";
+import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useEffect, type ReactNode } from "react";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import { useAlertSocket } from "@/api/ws";
 import { NavBar } from "@/components/NavBar";
@@ -27,29 +28,81 @@ export function App() {
   const total = useAlertStore((s) => s.alerts.length);
   useEffect(() => {
     document.title = total
-      ? `(${total > 99 ? "99+" : total}) Meshwatch — Fraud Detection`
-      : "Meshwatch — Fraud Detection";
+      ? `(${total > 99 ? "99+" : total}) Meshwatch — Fraud Intelligence`
+      : "Meshwatch — Fraud Intelligence";
   }, [total]);
 
-  const layoutShell = useMemo(
-    () => (
-      <div className="grid-bg min-h-full">
-        <NavBar wsStatus={wsStatus} />
-        <main className="mx-auto max-w-[1400px] px-6 py-6">
-          <Routes>
-            <Route path="/" element={<Navigate to="/dashboard" replace />} />
-            <Route path="/dashboard" element={<DashboardPage />} />
-            <Route path="/alerts/:alertId" element={<AlertPage />} />
-            <Route path="/network" element={<NetworkPage />} />
-            <Route path="/model" element={<ModelPage />} />
-            <Route path="/cases" element={<CasesPage />} />
-            <Route path="*" element={<Navigate to="/dashboard" replace />} />
-          </Routes>
-        </main>
-      </div>
-    ),
-    [wsStatus],
+  return (
+    <div className="min-h-full">
+      <NavBar wsStatus={wsStatus} />
+      <main className="mx-auto max-w-[1400px] px-6 py-8">
+        <AnimatedRoutes />
+      </main>
+    </div>
   );
+}
 
-  return layoutShell;
+function AnimatedRoutes() {
+  const location = useLocation();
+  return (
+    <AnimatePresence mode="wait" initial={false}>
+      <Routes location={location} key={location.pathname.split("/")[1] || "root"}>
+        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route
+          path="/dashboard"
+          element={
+            <PageWrapper>
+              <DashboardPage />
+            </PageWrapper>
+          }
+        />
+        <Route
+          path="/alerts/:alertId"
+          element={
+            <PageWrapper>
+              <AlertPage />
+            </PageWrapper>
+          }
+        />
+        <Route
+          path="/network"
+          element={
+            <PageWrapper>
+              <NetworkPage />
+            </PageWrapper>
+          }
+        />
+        <Route
+          path="/model"
+          element={
+            <PageWrapper>
+              <ModelPage />
+            </PageWrapper>
+          }
+        />
+        <Route
+          path="/cases"
+          element={
+            <PageWrapper>
+              <CasesPage />
+            </PageWrapper>
+          }
+        />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </AnimatePresence>
+  );
+}
+
+function PageWrapper({ children }: { children: ReactNode }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      transition={{ duration: 0.32, ease: [0.16, 1, 0.3, 1] }}
+    >
+      {children}
+    </motion.div>
+  );
 }

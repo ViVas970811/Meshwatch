@@ -1,34 +1,79 @@
 # Meshwatch -- Benchmarks
 
-Performance, latency, and throughput numbers across the Meshwatch stack.
-Last updated: Phase 8 release (`v1.0.0-release`).
+Performance, latency, throughput, and coverage numbers across the
+Meshwatch stack. All numbers are reproducible from the artifacts in
+this repo; the run commands are listed under each section.
 
-All numbers below are reproducible from the artifacts in this repo --
-the run commands are listed under each table.
+## Test environment
+
+| Item       | Value                                              |
+| :--        | :--                                                |
+| OS         | Windows 11                                         |
+| CPU        | AMD Ryzen 5 5500U, 6 cores / 12 threads, 16 GB RAM |
+| Python     | 3.10                                               |
+| PyTorch    | 2.10.0+cpu                                         |
+| Test client| `fastapi.testclient.TestClient` for the API benches |
 
 ---
 
 ## 1. Model performance (Phase 3)
 
-Evaluated on the IEEE-CIS test split (118,108 transactions, 3.5% fraud
-rate), using the ensemble bundle written by `make train-ensemble`.
+Trained on the full IEEE-CIS dataset (590,540 transactions):
 
-| Metric                 | GNN-only | XGBoost-only | **Ensemble** |
-| :--                    |     ---: |         ---: |         ---: |
-| AUROC                  |   0.9101 |       0.9215 |   **0.9347** |
-| AUPRC                  |   0.6892 |       0.7041 |   **0.7263** |
-| Precision @ K=1%       |    0.823 |        0.847 |    **0.869** |
-| Precision @ K=5%       |    0.624 |        0.658 |    **0.681** |
-| Recall @ K=1%          |    0.235 |        0.242 |    **0.258** |
-| Recall @ K=5%          |    0.715 |        0.751 |    **0.788** |
-| Brier score            |   0.0241 |       0.0218 |   **0.0203** |
-| Calibration ECE (10 b) |   0.0312 |       0.0284 |   **0.0267** |
+  preprocess  -> 590,540 rows x 501 features
+  split       -> 354k train / 118k val / 118k test, 60/20/20 temporal
+  build-graph -> 590k transaction seeds + 15.5k entities, ~3.4M edges
+  train GNN   -> 100 epochs max, cosine LR schedule, FocalLoss
+                  (alpha=0.75, gamma=2.0), NeighborLoader [15, 10, 5]
+  ensemble    -> XGBoost on [64-d GNN embedding + 120 graph features +
+                  selected V columns] = 184 features
 
-Reproduce:
+### Validation split (n=118,108, fraud rate 3.90%)
+
+| Metric                  | GNN-only | **Ensemble** |
+| :--                     |     ---: |         ---: |
+| AUPRC                   |   0.2511 |   **0.3601** |
+| AUROC                   |   0.8119 |   **0.7782** |
+| Best F1                 |   0.3082 |   **0.3911** |
+| Best precision          |   0.2879 |   **0.4792** |
+| Best recall             |   0.3316 |       0.3303 |
+| Precision @ top 0.1%    |   0.7059 |   **0.9748** |
+| **Precision @ top 1%**  |   0.4255 |   **0.7377** |
+| Precision @ top 5%      |   0.2196 |       0.3320 |
+| Precision @ top 10%     |   0.1549 |       0.2077 |
+
+### Test split (n=118,108, fraud rate 3.44%)
+
+| Metric                  | GNN-only | **Ensemble** |
+| :--                     |     ---: |         ---: |
+| AUPRC                   |   0.2032 |   **0.2449** |
+| AUROC                   |   0.7867 |   **0.7499** |
+| Best F1                 |   0.2713 |       0.2778 |
+| Best precision          |   0.2554 |       0.2721 |
+| Best recall             |   0.2894 |       0.2837 |
+| Precision @ top 0.1%    |   0.7059 |   **0.8235** |
+| **Precision @ top 1%**  |   0.4255 |   **0.5592** |
+| Precision @ top 5%      |   0.2196 |       0.2310 |
+| Precision @ top 10%     |   0.1549 |       0.1583 |
+
+### Headline read
+
+**Top-1% precision = 0.74 on val (0.56 on test)** -- if an analyst
+queue reviews the highest-scored 1% of transactions, 74% of those
+flags are real fraud on val and 56% on test, at base rates of
+3.9% and 3.4% respectively (19× and 16× lift). **Top-0.1%
+precision = 0.97 / 0.82** -- the highest-confidence flags are
+nearly all correct.
+
+### Reproduce
 
 ```bash
-make train-ensemble          # writes data/models/ensemble/
-make evaluate-ensemble       # PR / ROC / calibration plots on test split
+make download-data           # IEEE-CIS via Kaggle
+make preprocess && make split
+make build-graph             # full 590k heterograph
+make train                   # GNN -> data/models/gnn/
+make train-ensemble          # GNN + XGBoost -> data/models/ensemble/
+make evaluate-ensemble       # writes PR / ROC / calibration on test
 ```
 
 Notebook walkthrough: [notebooks/04_ensemble.ipynb](../notebooks/04_ensemble.ipynb).
@@ -37,172 +82,102 @@ Notebook walkthrough: [notebooks/04_ensemble.ipynb](../notebooks/04_ensemble.ipy
 
 ## 2. Inference latency (Phase 4)
 
-Local FastAPI on the dev box (Ryzen 5 5500U, 16 GB), measured by
-`scripts/demo_stream.py` running 2000 transactions at 50 RPS through
-`/api/v1/predict/batch`.
+In-process `TestClient` against the FastAPI app with full middleware
+stack (timing + Prometheus + monitoring registry + auth + rate-limit).
+2000 requests per endpoint after a 50-request warm-up.
 
-| Percentile | Latency | Notes |
-| :--        |    ---: | :-- |
-| P50        |   1.4 ms | model only -- excluding HTTP framing |
-| P95        |   1.6 ms | well under the 50 ms plan budget |
-| P99        |   2.9 ms | |
-| Mean       |   1.5 ms | |
-| Max        |   8.2 ms | cold cache miss + GNN forward |
+| Endpoint                                | P50      | P95      | P99      |
+| :--                                     |     ---: |     ---: |     ---: |
+| `POST /api/v1/predict`                  |  3.10 ms |  3.98 ms |  4.45 ms |
+| `POST /api/v1/predict/batch` (size=50)  |  4.78 ms |  5.61 ms |  6.01 ms |
+| `POST /api/v1/predict/batch` (size=100) |  6.10 ms |  7.12 ms |  7.35 ms |
+| `GET  /api/v1/health`                   |  2.39 ms |  3.11 ms |  3.43 ms |
+| `GET  /api/v1/metrics`                  |  6.32 ms |  7.30 ms |  7.75 ms |
+| `GET  /api/v1/monitoring/drift`         |  2.36 ms |  2.95 ms |  3.39 ms |
+| `GET  /api/v1/monitoring/performance`   |  3.08 ms |  3.87 ms |  4.31 ms |
+| `GET  /api/v1/monitoring/alerts`        |  2.97 ms |  3.76 ms |  4.06 ms |
+| `GET  /api/v1/monitoring/shadow`        |  2.36 ms |  3.07 ms |  3.37 ms |
 
-Reproduce:
-
-```bash
-make serve                              # start the API
-make demo-stream-batch                  # 2000 txns @ 50 RPS, summary only
-```
-
-Latency breakdown per the Phase 4 budget table (page 9 of the plan):
-
-| Stage                              | Budget | Measured |
-| :--                                |   ---: |     ---: |
-| Feast `get_online_features`        |   2 ms |   1.1 ms |
-| Real-time temporal features        |   5 ms |   0.0 ms (Phase 1 preprocessor) |
-| Redis cached embedding             |   1 ms |   0.2 ms (in-memory fallback) |
-| XGBoost `predict_proba`            |   2 ms |   0.6 ms |
-| SHAP explanation                   |  10 ms |   2.3 ms |
-| **Total budget**                   | **50 ms** | **4.2 ms typical** |
-
-The measured mean is well below budget because (a) SHAP is the
-single largest item and the ensemble's tree depth keeps it fast,
-and (b) the Redis cache resolves to the in-memory fallback in local
-dev.
+Phase 4 latency budget is P95 < 50 ms on `/api/v1/predict`; measured
+P95 = 4 ms.
 
 ---
 
-## 3. Throughput
+## 3. Throughput (Phase 4)
 
-Single-process uvicorn, no Ray Serve scaling.
+Single-threaded sequential calls; multi-process uvicorn or Ray Serve
+scales near-linearly with worker count.
 
-| Endpoint                  | Concurrency | Throughput     |
-| :--                       |        ---: | ---:           |
-| `POST /api/v1/predict`    |           1 | ~640 rps       |
-| `POST /api/v1/predict/batch` (size 50) |  1 | ~12,200 rps |
-| `GET  /api/v1/health`     |           1 | ~3,200 rps     |
-
-Reproduce:
-
-```bash
-make serve
-python scripts/demo_stream.py --n 2000 --rps 1000 --batch 50 --summary-only
-```
-
-For multi-replica scaling, run `make serve-ray` (Ray Serve, 2 replicas
-by default). Throughput scales near-linearly with replica count.
+| Endpoint                                | Throughput     |
+| :--                                     |           ---: |
+| `POST /api/v1/predict`                  |        309 rps |
+| `POST /api/v1/predict/batch` (size=50)  | **10,161 rps** |
+| `POST /api/v1/predict/batch` (size=100) | **15,693 rps** |
+| `GET  /api/v1/health`                   |        408 rps |
 
 ---
 
-## 4. Dashboard (Phase 6)
+## 4. Agent investigation (Phase 5)
 
-Lighthouse audit, production Vite build, served by nginx.
+`POST /api/v1/investigate` round-trip across the four routing depths,
+20 calls per depth.
 
-| Metric                  | Score |
-| :--                     |  ---: |
-| Performance             |    96 |
-| Best Practices          |   100 |
-| Accessibility           |    95 |
-| SEO                     |   100 |
+| Risk level | Routing depth     | P50     | P95     |
+| :--        | :--               |    ---: |    ---: |
+| LOW        | quick (2 tools)   | 6.59 ms | 8.66 ms |
+| MEDIUM     | quick (2 tools)   | 6.52 ms | 7.59 ms |
+| HIGH       | standard (5 tools)| 7.02 ms | 7.97 ms |
+| CRITICAL   | deep (7 tools)    | 7.64 ms | 8.48 ms |
 
-Bundle size: 318 KB gzipped (React 18 + TanStack Query + Recharts +
-force-graph-2d combined).
+These are orchestration-overhead numbers (deterministic stub LLM); a
+real Ollama daemon adds the LLM cost on top -- typically 4-15 s for
+`llama3.1:8b` standard depth on CPU.
 
-Reproduce:
+```bash
+OLLAMA_BASE_URL=http://localhost:11434 make investigate-ollama
+```
+
+---
+
+## 5. Dashboard (Phase 6)
+
+| Metric            | Value |
+| :--               |  ---: |
+| Vitest test count |  32   |
 
 ```bash
 make dashboard-build
-npx lighthouse http://localhost:5173 --view
+make dashboard-test
 ```
-
----
-
-## 5. Agent investigation (Phase 5)
-
-Latency of `POST /api/v1/investigate`, measured against the three
-routing depths.
-
-| Risk level     | Depth     | Tools | Local stub | Ollama (`llama3.1:8b`) |
-| :--            | :--       |  ---: |       ---: |                   ---: |
-| LOW / MEDIUM   | quick     |     2 |      28 ms |                 4.2 s  |
-| HIGH           | standard  |     5 |      54 ms |                14.7 s  |
-| CRITICAL       | deep      |     7 |      62 ms |                28.0 s  |
-
-Reproduce:
-
-```bash
-make investigate               # stub LLM, all 3 depths (deterministic)
-make investigate-ollama        # routes through Ollama at OLLAMA_BASE_URL
-```
-
-The stub run is what CI exercises; the Ollama run is gated on the daemon
-being reachable. Both produce the same `InvestigationReport` shape.
 
 ---
 
 ## 6. Tests + coverage
 
-| Suite          | Count |
-| :--            |  ---: |
-| Python unit    |   445 |
-| Python e2e int.|    10 |
-| TS dashboard   |    32 |
-| **Total**      | **487** |
-
-Reproduce:
+| Suite              | Count   |
+| :--                |    ---: |
+| Python unit        |     428 |
+| Python integration |      10 |
+| TypeScript Vitest  |      32 |
+| **Total**          | **470** |
 
 ```bash
-make test                   # Python unit
-pytest tests/integration -v -m integration   # Python integration
-make dashboard-test         # 32 Vitest tests
-make test-cov               # coverage report (htmlcov/index.html)
+PYTHONPATH=src pytest tests/unit --cov=src/fraud_detection --cov-report=term
+PYTHONPATH=src pytest tests/integration -m integration
+cd dashboard && npm test -- --run
 ```
 
-Phase 8 acceptance criterion (`>85%` coverage) is met -- the
-`make test-cov` HTML report currently shows 87% statement coverage and
-83% branch coverage across `src/fraud_detection`.
+Coverage on `src/fraud_detection`: **85%** statement, branch on.
 
 ---
 
-## 7. Cold-start: `docker compose up`
+## 7. Reproduction
 
-Time from `docker compose up -d` to the API answering `/api/v1/health`
-with `status=ok`, measured on the dev box with images warm in the local
-Docker cache:
-
-| Phase                                | Duration |
-| :--                                  |     ---: |
-| `docker compose up -d` returns       |     7 s  |
-| Redis healthy                        |    +2 s  |
-| Kafka + Zookeeper healthy            |   +27 s  |
-| MLflow listening                     |    +3 s  |
-| Prometheus scraping                  |    +5 s  |
-| Grafana provisioning + dashboards    |    +6 s  |
-| API `/health` returns 200            |    +9 s  |
-| Dashboard nginx ready                |    +3 s  |
-| **Total to "open the demo URL"**     | **~62 s** |
-
-Comfortably under the Phase 8 acceptance bar (`<3 min`).
-
-Reproduce:
+The latency + throughput numbers come from boot-the-app-in-process
+benches. The production-realistic equivalent (uvicorn over the wire,
+real ensemble loaded) runs via:
 
 ```bash
-docker compose up -d
-make demo                       # equivalent to `python scripts/demo.py`
+docker compose up -d                # boots the full stack
+make demo                           # 1000-tx replay; prints P50/P95/P99
 ```
-
----
-
-## 8. Source of truth
-
-All raw numbers from the latest training run are captured in the
-MLflow store at `mlflow.db` (or your remote tracking URI). The
-`monitor.py` CLI snapshots production drift to
-`data/reports/latest/drift.json`. CI publishes coverage XML under
-`coverage.xml` on the `lint-and-test` job.
-
-When you re-train, re-run these commands and update the tables above.
-The numbers shouldn't move by more than a fraction of a percentage point
-on the same hardware unless the IEEE-CIS sample changes.

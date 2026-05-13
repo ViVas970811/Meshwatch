@@ -66,8 +66,8 @@ export function AlertPage() {
           <ArrowLeft className="h-4 w-4" /> Back
         </Button>
         <div>
-          <div className="text-xs uppercase tracking-widest text-ink-400">Alert investigation</div>
-          <h1 className="font-mono text-xl">{alertId}</h1>
+          <div className="kicker">Alert investigation</div>
+          <h1 className="font-mono text-xl text-ink-50">{alertId}</h1>
         </div>
       </div>
 
@@ -103,7 +103,7 @@ function AlertDetail({
 }) {
   return (
     <Card>
-      <CardHeader title="Transaction" subtitle="from /api/v1/recent" />
+      <CardHeader title="Transaction details" subtitle="Scored transaction summary" />
       <CardBody className="space-y-2 text-sm">
         <Row label="Score">{prediction ? fmtScore(prediction.fraud_score) : "—"}</Row>
         <Row label="Risk">
@@ -139,15 +139,15 @@ function RiskFactorChart({
 
   return (
     <Card>
-      <CardHeader title="Risk factors" subtitle="SHAP top contributions" />
+      <CardHeader title="Top risk factors" subtitle="Features driving this score" />
       <CardBody>
         {features.length === 0 ? (
           <Empty
-            title="SHAP not populated"
+            title="Risk factors unavailable"
             hint={
               report
-                ? "Tabular SHAP wasn't logged with this prediction. Use the agent's matched_patterns below."
-                : "Run the agent to populate richer evidence."
+                ? "Detailed factor breakdown isn't available for this transaction. See the investigation findings below."
+                : "Start an investigation to surface deeper evidence."
             }
           />
         ) : (
@@ -189,7 +189,7 @@ function CardTimeline({
 }) {
   return (
     <Card>
-      <CardHeader title="Card timeline" subtitle="recent on same card_id" />
+      <CardHeader title="Card timeline" subtitle="Recent activity for this card" />
       <CardBody>
         {!alert && !prediction ? (
           <Empty title="No alert context" />
@@ -205,7 +205,7 @@ function CardTimeline({
             </li>
             <li>
               <div className="absolute -left-[5px] mt-1 h-2 w-2 rounded-full bg-ink-500" />
-              <div className="text-ink-300">Phase 7 will wire Feast online-store history here.</div>
+              <div className="text-ink-300">Earlier card history will appear here once available.</div>
             </li>
           </ol>
         )}
@@ -256,11 +256,14 @@ function GraphExplorer({
 
   return (
     <Card>
-      <CardHeader title="Graph explorer" subtitle="card + agent-derived entities" />
+      <CardHeader title="Connected entities" subtitle="Card relationships surfaced by the investigation" />
       <CardBody className="p-0">
         {nodes.length <= 1 ? (
           <div className="px-5 py-10">
-            <Empty title="Graph appears after investigation" hint="Run the agent to populate." />
+            <Empty
+              title="No connections yet"
+              hint="Run an investigation to map related accounts, devices, and merchants."
+            />
           </div>
         ) : (
           <NetworkGraph nodes={nodes} links={links} height={360} highlightId={String(alert?.card_id)} />
@@ -284,12 +287,12 @@ function InvestigationPanel({
   return (
     <Card>
       <CardHeader
-        title="Agent investigation"
-        subtitle={report ? `model: ${report.model}` : "POST /api/v1/investigate"}
+        title="AI investigation"
+        subtitle={report ? `Powered by ${report.model}` : "AI-assisted analyst workflow"}
         right={
           <Button onClick={onRun} disabled={loading} variant="primary">
             <Wand2 className="h-4 w-4" />
-            {loading ? "Investigating..." : report ? "Re-run" : "Run agent"}
+            {loading ? "Investigating..." : report ? "Re-run" : "Run investigation"}
           </Button>
         }
       />
@@ -307,7 +310,7 @@ function InvestigationPanel({
         ) : !report ? (
           <Empty
             title="No investigation yet"
-            hint="Click Run agent to invoke the LangGraph orchestrator."
+            hint='Click "Run investigation" to analyze this alert.'
           />
         ) : (
           <div className="space-y-4">
@@ -320,7 +323,7 @@ function InvestigationPanel({
                 </span>
               ) : null}
               <span className="text-xs text-ink-400">
-                {report.tools_used.length}/8 tools • {fmtMs(report.elapsed_ms)} • conf{" "}
+                {report.tools_used.length} signals analyzed · {fmtMs(report.elapsed_ms)} · confidence{" "}
                 {fmtScore(report.confidence)}
               </span>
             </div>
@@ -339,12 +342,12 @@ function InvestigationPanel({
 
             {report.matched_patterns?.length ? (
               <div>
-                <div className="stat-label mb-1">Matched patterns</div>
+                <div className="stat-label mb-1">Fraud patterns identified</div>
                 <ul className="space-y-1 text-sm">
                   {report.matched_patterns.map((p, i) => (
                     <li key={`${p.name}-${i}`} className="flex justify-between gap-3">
                       <span className="text-ink-200">{p.name}</span>
-                      <span className="text-ink-400">conf {fmtScore(p.confidence)}</span>
+                      <span className="text-ink-400">confidence {fmtScore(p.confidence)}</span>
                     </li>
                   ))}
                 </ul>

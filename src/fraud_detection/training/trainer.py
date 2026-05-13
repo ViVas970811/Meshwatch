@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -203,7 +204,12 @@ class Trainer:
             eta_min=self.config.cosine_eta_min,
         )
         self.early_stopping = EarlyStopping(patience=self.config.early_stop_patience, mode="max")
-        self.checkpoint = ModelCheckpoint(monitor="val_auprc", mode="max")
+        # Persist the best state_dict to disk on every improvement so a mid-run
+        # kill (OOM, SIGTERM) doesn't lose the best epoch. Cheap (~6 MB write).
+        ckpt_path = getattr(self.config, "checkpoint_path", None) or Path(
+            "data/models/gnn/checkpoint.pt"
+        )
+        self.checkpoint = ModelCheckpoint(monitor="val_auprc", mode="max", path=Path(ckpt_path))
         self.history: list[dict[str, float]] = []
 
     # ------------------------------------------------------------------

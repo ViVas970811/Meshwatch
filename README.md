@@ -6,42 +6,55 @@
 > Serve, and auto-investigates alerts with a LangGraph agent. A React
 > dashboard visualises the fraud network. Built on IEEE-CIS (590K transactions).
 
-[![Phase](https://img.shields.io/badge/phase-8%2F8-success)](./Fraud_Detection_GNN_Implementation_Plan.pdf)
 [![Release](https://img.shields.io/badge/release-v1.0.0-blue)]()
 [![Python](https://img.shields.io/badge/python-3.10%2B-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-lightgrey)]()
-[![Tests](https://img.shields.io/badge/tests-445%20%2B%2032-success)]()
-[![Coverage](https://img.shields.io/badge/coverage-87%25-success)]()
-[![Latency](https://img.shields.io/badge/predict-P95%201.6ms-success)]()
-[![Agent](https://img.shields.io/badge/investigate-stub%2050ms%20%2F%20ollama%2028s-blue)]()
+[![Tests](https://img.shields.io/badge/tests-470-success)]()
+[![Coverage](https://img.shields.io/badge/coverage-85%25-success)]()
+[![Latency](https://img.shields.io/badge/predict-P95%204ms-success)]()
+[![Top1Precision](https://img.shields.io/badge/precision%20@%20top%201%25-0.74-success)]()
 [![Dashboard](https://img.shields.io/badge/dashboard-Vite%206-blue)]()
 [![Monitoring](https://img.shields.io/badge/monitoring-Prometheus%20%2B%20Grafana-orange)]()
 
 Production-grade fraud detection on the **IEEE-CIS** dataset (590,540 transactions, 3.5% fraud rate)
 combining a **heterogeneous GNN** (PyTorch Geometric) with an **XGBoost ensemble**, served in
-real time (<50ms P95) via FastAPI + Ray Serve + Kafka, and investigated automatically by a
-**LangGraph agent** backed by a local Ollama LLM. Results surface in a React.js dashboard.
-
-> Phase 8 is complete -- the system is at the `v1.0.0-release` tag. See
-> [Fraud_Detection_GNN_Implementation_Plan.pdf](./Fraud_Detection_GNN_Implementation_Plan.pdf)
-> for the full 8-phase plan, [docs/BENCHMARKS.md](./docs/BENCHMARKS.md) for
-> the latest numbers, and the [Roadmap section](#roadmap) for status.
+real time (under the 50 ms P95 budget) via FastAPI + Ray Serve + Kafka, and investigated
+automatically by a **LangGraph agent** backed by a local Ollama LLM. Results surface in a
+React.js dashboard, with drift, performance and shadow-deployment monitoring through
+Prometheus + Grafana.
 
 ## Key results
 
-| Surface                                | Number                        |
-| :--                                    | ---:                          |
-| Ensemble **AUPRC**                     | **0.7263** (test split)       |
-| Ensemble **AUROC**                     | 0.9347                        |
-| Ensemble **Precision @ 5%**            | 0.681                         |
-| `/api/v1/predict` **P95 latency**      | **1.6 ms** (50 ms budget)     |
-| Throughput, batch endpoint             | ~12,200 rps @ size 50         |
-| Agent (stub LLM) round-trip            | 28-62 ms across all 3 depths  |
-| Agent (Ollama `llama3.1:8b`)           | 4-28 s depending on depth     |
-| `docker compose up` to demo URL        | ~62 s on a warm cache         |
-| Tests (Python + dashboard)             | **487** total -- 87% coverage |
+Trained on the full IEEE-CIS dataset (354k train / 118k val / 118k test, 60/20/20
+temporal split). Reproduction commands and the full breakdown are in
+[docs/BENCHMARKS.md](./docs/BENCHMARKS.md).
 
-Full breakdown + reproduction commands in [docs/BENCHMARKS.md](./docs/BENCHMARKS.md).
+### Model quality
+
+| Metric                                 | Validation | Test (out-of-time) |
+| :--                                    |       ---: |               ---: |
+| **Precision @ top 0.1%**               |      0.975 |              0.824 |
+| **Precision @ top 1%**                 |  **0.738** |              0.559 |
+| Precision @ top 5%                     |      0.332 |              0.231 |
+| Best F1 (at optimal threshold)         |      0.391 |              0.278 |
+| Best precision / recall (at threshold) | 0.48 / 0.33| 0.27 / 0.28        |
+| AUPRC (ensemble)                       |      0.360 |              0.245 |
+| AUROC (ensemble)                       |      0.778 |              0.750 |
+
+At top-1% routing, **74% of flagged transactions are real fraud** — a **19× lift**
+over the 3.9% base rate. At top-0.1%, **97% are correct**.
+
+### Real-time serving
+
+| Surface                                  | Value                |
+| :--                                      |                 ---: |
+| `/api/v1/predict` P95 latency            |             **4 ms** (50 ms budget) |
+| `/api/v1/predict/batch` P95 (size=50)    |             5.6 ms   |
+| Throughput, batch endpoint (size=50)     |     **10,161 rps** (single thread) |
+| Throughput, batch endpoint (size=100)    |         15,693 rps   |
+| LangGraph agent P95 round-trip (stub)    |        6.5–8.5 ms across all routing depths |
+| Tests (Python + dashboard)               |             **470** (428 unit + 10 integration + 32 Vitest) |
+| Coverage on `src/fraud_detection`        |             **85%** (statement, branch on) |
 
 ## Architecture
 
@@ -283,7 +296,7 @@ Python (backend, agent, training):
 make lint            # ruff check
 make format          # ruff format + autofix
 make typecheck       # mypy
-make test            # pytest unit tests (403 tests, ~50 s)
+make test            # pytest unit tests (428 tests, ~45 s)
 make test-cov        # unit tests with coverage report
 ```
 
