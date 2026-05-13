@@ -158,6 +158,7 @@ def _load_card_history_store(
     """
     try:
         import pandas as pd
+
         from fraud_detection.agent.tools import CardHistoryStore, HistoricalTransaction
     except Exception as exc:  # pragma: no cover -- defensive
         log.warning("history_store_imports_failed", error=str(exc))
@@ -294,15 +295,15 @@ async def lifespan(app: FastAPI):
             history_store = _load_card_history_store()
 
             state.agent_deps = AgentDeps(
-                llm=llm, history=history_store, graph=neo4j_graph,
+                llm=llm,
+                history=history_store,
+                graph=neo4j_graph,
             )
             state.agent_compiled = build_graph(state.agent_deps)
             log.info(
                 "agent_ready",
                 llm=getattr(state.agent_deps.llm, "name", "stub"),
-                history_cards=(
-                    len(history_store._by_card) if history_store is not None else 0
-                ),
+                history_cards=(len(history_store._by_card) if history_store is not None else 0),
                 neo4j=neo4j_graph is not None,
             )
         except Exception as exc:
