@@ -40,14 +40,25 @@ from fraud_detection.utils.logging import configure_logging, get_logger  # noqa:
 
 
 def _row_to_request(row: pd.Series) -> dict:
-    """Map a parquet row into a TransactionRequest payload."""
+    """Map a parquet row into a TransactionRequest payload.
+
+    Forwards two layers:
+    * The few well-known fields the API expects by name
+      (transaction_id / dt / amt / product_cd / card / addr / dist).
+    * Any other engineered ``feat_*`` columns the row carries. The
+      TransactionRequest schema allows extras (``extra="allow"``) and
+      the predictor maps them by name into the trained XGBoost feature
+      matrix -- so if the source parquet is ``data/graphs/features.parquet``
+      the request carries all 119 engineered features and the model
+      actually scores against them.
+    """
     out: dict = {
         "transaction_id": int(row.get("TransactionID", 0)),
         "transaction_dt": int(row.get("TransactionDT", 0)),
         "transaction_amt": float(row.get("TransactionAmt", 0.0)),
         "product_cd": "W",
     }
-    # Optional numeric fields
+    # Optional well-known fields.
     for col, dest in [
         ("card1", "card1"),
         ("card2", "card2"),
@@ -61,6 +72,23 @@ def _row_to_request(row: pd.Series) -> dict:
         v = row.get(col)
         if v is not None and not (isinstance(v, float) and np.isnan(v)):
             out[dest] = float(v) if dest != "card1" else int(v)
+
+    # Forward every other numeric column verbatim (feat_*, V1..V339,
+    # D1..D15, C1..C14, id_01..id_38, etc.). The predictor's
+    # _build_tabular_row maps these by column name; unknown keys are
+    # silently dropped, so passing extras is safe.
+    skip = {"TransactionID", "TransactionDT", "TransactionAmt", "isFraud", "event_timestamp"}
+    for col, v in row.items():
+        if col in out or col in skip:
+            continue
+        if v is None:
+            continue
+        if isinstance(v, float) and np.isnan(v):
+            continue
+        try:
+            out[col] = float(v)
+        except (TypeError, ValueError):
+            continue
     return out
 
 

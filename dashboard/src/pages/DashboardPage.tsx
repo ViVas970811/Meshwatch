@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { motion } from "framer-motion";
 import { useEffect, useMemo } from "react";
 
 import { api } from "@/api/client";
@@ -7,8 +8,7 @@ import { LatencyMonitor } from "@/components/charts/LatencyMonitor";
 import { ScoreDistributionChart } from "@/components/charts/ScoreDistributionChart";
 import { AlertCounter } from "@/components/feed/AlertCounter";
 import { TransactionFeed } from "@/components/feed/TransactionFeed";
-import { Stat } from "@/components/ui/Stat";
-import { fmtMs } from "@/lib/format";
+import { AnimatedNumber, Stat } from "@/components/ui/Stat";
 import { useAlertStore } from "@/store/alerts";
 
 export function DashboardPage() {
@@ -21,16 +21,12 @@ export function DashboardPage() {
     refetchInterval: 5000,
   });
 
-  // Backfill the alert store with anything from /api/v1/recent when the
-  // store is empty -- this fills in the dashboard on page reload before
-  // any new WebSocket alert lands.
   const recentAlerts = recent?.alerts;
   useEffect(() => {
     if (!recentAlerts) return;
     if (alerts.length > 0) return;
     if (recentAlerts.length === 0) return;
     pushAlerts(recentAlerts);
-    // We only want to backfill once on first load, hence the empty deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recentAlerts]);
 
@@ -51,39 +47,55 @@ export function DashboardPage() {
   }, [predictions]);
 
   return (
-    <div className="grid gap-6">
-      <header className="flex items-end justify-between">
+    <div className="space-y-8">
+      {/* Hero header */}
+      <motion.header
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
+        className="flex flex-wrap items-end justify-between gap-4"
+      >
         <div>
-          <div className="text-xs uppercase tracking-widest text-ink-400">Real-time monitor</div>
-          <h1 className="text-2xl font-semibold">Live fraud activity</h1>
-          <p className="text-sm text-ink-300">
-            Alerts stream over <code className="text-ink-200">/ws/alerts</code>; predictions
-            populate via <code className="text-ink-200">/api/v1/recent</code> every 5 s.
+          <div className="kicker">Real-time monitor</div>
+          <h1 className="mt-1 page-title">Live fraud activity</h1>
+          <p className="mt-1.5 page-sub">
+            Streaming predictions and alerts across the production pipeline.
           </p>
         </div>
-      </header>
+      </motion.header>
 
-      {/* Top stat row */}
+      {/* Top KPI row */}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <AlertCounter alerts={alerts} />
+        <AlertCounter alerts={alerts} delay={0.0} />
         <Stat
           label="Recent predictions"
-          value={predictions.length}
-          hint={`window: ${predictions.length} most recent`}
+          value={<AnimatedNumber value={predictions.length} />}
+          hint="Trailing window served by the API"
+          delay={0.05}
         />
         <Stat
           label="Latency P95"
-          value={fmtMs(latencyP95)}
-          hint="end-to-end /predict, target <50ms"
+          value={
+            <AnimatedNumber
+              value={latencyP95}
+              decimals={1}
+              suffix=" ms"
+              thousands={false}
+            />
+          }
+          accent={latencyP95 < 50 ? "good" : latencyP95 < 100 ? "warn" : "danger"}
+          hint="End-to-end /predict; budget < 50 ms"
+          delay={0.1}
         />
         <Stat
-          label="Alerts (live buffer)"
-          value={alerts.length}
-          hint="capped at 500 by Zustand store"
+          label="Alert buffer"
+          value={<AnimatedNumber value={alerts.length} />}
+          hint="WebSocket-fed rolling window"
+          delay={0.15}
         />
       </section>
 
-      {/* Charts row */}
+      {/* Visualization row 1 */}
       <section className="grid gap-4 lg:grid-cols-3">
         <FraudRateGauge rate={fraudRate} total={predictions.length} />
         <div className="lg:col-span-2">
@@ -91,6 +103,7 @@ export function DashboardPage() {
         </div>
       </section>
 
+      {/* Visualization row 2 */}
       <section className="grid gap-4 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <LatencyMonitor predictions={predictions} />

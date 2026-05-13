@@ -2,8 +2,23 @@ import type { HTMLAttributes, ReactNode } from "react";
 
 import { cn } from "@/lib/cn";
 
-export function Card({ className, ...props }: HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("surface", className)} {...props} />;
+interface CardProps extends HTMLAttributes<HTMLDivElement> {
+  interactive?: boolean;
+  accent?: boolean;
+}
+
+export function Card({ className, interactive, accent, ...props }: CardProps) {
+  return (
+    <div
+      className={cn(
+        "surface",
+        interactive && "surface-interactive cursor-pointer",
+        accent && "ring-accent/40 shadow-glow",
+        className,
+      )}
+      {...props}
+    />
+  );
 }
 
 export function CardHeader({
@@ -25,8 +40,10 @@ export function CardHeader({
       )}
     >
       <div>
-        <div className="text-sm font-semibold text-ink-100">{title}</div>
-        {subtitle ? <div className="text-xs text-ink-400">{subtitle}</div> : null}
+        <div className="text-sm font-semibold tracking-tight text-ink-50">{title}</div>
+        {subtitle ? (
+          <div className="mt-0.5 text-xs text-ink-400">{subtitle}</div>
+        ) : null}
       </div>
       {right ? <div className="shrink-0">{right}</div> : null}
     </div>

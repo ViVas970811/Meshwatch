@@ -73,8 +73,8 @@ describe("TransactionFeed", () => {
       </MemoryRouter>,
     );
 
-    // The first row corresponds to txn 1001.
-    const row = screen.getByText(/txn 1001/).closest("li");
+    // The first row corresponds to txn id starting with "1001".
+    const row = screen.getByText(/^1001/).closest("li");
     expect(row).not.toBeNull();
     await user.click(row!);
     // After navigating, the route renders 'routed'.
