@@ -152,6 +152,66 @@ class AppState:
 # ---------------------------------------------------------------------------
 
 
+def _load_card_history_store(
+    csv_path: Path | str = "data/raw/train_transaction.csv",
+    max_rows: int | None = None,
+) -> Any:
+    """Build a :class:`CardHistoryStore` populated from raw IEEE-CIS rows.
+
+    Reads from the raw CSV (not the standardized processed parquet) so the
+    original integer ``card1`` IDs are preserved -- the predictor's
+    ``_build_tabular_row`` uses the same raw IDs as keys, so the agent's
+    history lookups line up with the transactions being scored.
+
+    Returns ``None`` if the CSV isn't present yet; tools then skip gracefully.
+    """
+    try:
+        import pandas as pd
+
+        from fraud_detection.agent.tools import CardHistoryStore, HistoricalTransaction
+    except Exception as exc:  # pragma: no cover -- defensive
+        log.warning("history_store_imports_failed", error=str(exc))
+        return None
+
+    p = Path(csv_path)
+    if not p.is_absolute():
+        p = Path(__file__).resolve().parents[3] / p
+    if not p.exists():
+        log.warning("history_store_csv_missing", path=str(p))
+        return None
+
+    cols = ["TransactionID", "TransactionDT", "TransactionAmt", "isFraud", "card1", "ProductCD"]
+    t0 = time.perf_counter()
+    df = pd.read_csv(p, usecols=cols)
+    if max_rows is not None:
+        df = df.head(max_rows)
+
+    store = CardHistoryStore()
+    for row in df.itertuples(index=False):
+        card_id = getattr(row, "card1", None)
+        if card_id is None or (isinstance(card_id, float) and card_id != card_id):
+            continue
+        try:
+            store.add(
+                HistoricalTransaction(
+                    transaction_id=int(row.TransactionID),
+                    transaction_dt=int(row.TransactionDT),
+                    transaction_amt=float(row.TransactionAmt),
+                    is_fraud=int(row.isFraud) if row.isFraud is not None else 0,
+                    card_id=int(card_id),
+                ),
+            )
+        except (TypeError, ValueError):
+            continue
+    log.info(
+        "history_store_loaded",
+        rows=len(df),
+        cards=len(store._by_card),
+        elapsed_ms=int((time.perf_counter() - t0) * 1000),
+    )
+    return store
+
+
 def _resolve_settings() -> dict[str, Any]:
     return {
         "ensemble_dir": os.environ.get("FRAUD_ENSEMBLE_DIR", "data/models/ensemble"),
@@ -230,17 +290,28 @@ async def lifespan(app: FastAPI):
                 except Exception as exc:
                     log.warning("agent_neo4j_init_failed", error=str(exc))
 
-            # Optional: try a real Ollama daemon when OLLAMA_BASE_URL is set;
-            # otherwise default to the deterministic stub.
+            # Try a real Ollama daemon by default; fall back to the deterministic
+            # stub if it can't be reached. Set FRAUD_AGENT_LLM=stub to force stub.
             from fraud_detection.agent import get_llm
 
-            llm = get_llm(prefer_ollama=bool(os.environ.get("OLLAMA_BASE_URL")))
+            llm = get_llm(prefer_ollama=True)
 
-            state.agent_deps = AgentDeps(llm=llm, graph=neo4j_graph)
+            # Populate a CardHistoryStore from raw IEEE-CIS rows so the
+            # analyze_card_history / analyze_velocity tools have real
+            # evidence to surface. Falls back to None when the CSV is
+            # absent (tools skip gracefully).
+            history_store = _load_card_history_store()
+
+            state.agent_deps = AgentDeps(
+                llm=llm,
+                history=history_store,
+                graph=neo4j_graph,
+            )
             state.agent_compiled = build_graph(state.agent_deps)
             log.info(
                 "agent_ready",
                 llm=getattr(state.agent_deps.llm, "name", "stub"),
+                history_cards=(len(history_store._by_card) if history_store is not None else 0),
                 neo4j=neo4j_graph is not None,
             )
         except Exception as exc:

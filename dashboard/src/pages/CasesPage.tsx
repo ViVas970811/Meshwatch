@@ -71,7 +71,7 @@ export function CasesPage() {
           {list.length === 0 ? (
             <Empty
               title="No cases yet"
-              hint="Open an alert and click 'Run agent' to generate one."
+              hint='Open an alert and click "Run investigation" to create one.'
             />
           ) : (
             <table className="w-full text-left text-sm">
