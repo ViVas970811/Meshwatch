@@ -52,10 +52,24 @@ def _row_to_request(row: pd.Series) -> dict:
       the request carries all 119 engineered features and the model
       actually scores against them.
     """
+    # When the source parquet is features.parquet, the raw TransactionAmt has
+    # been replaced by engineered feat_log_amt / feat_amt_cum_* columns. Fall
+    # back to a synthesized log-uniform amount in [$5, $5000] so the alert
+    # feed and downstream UI show realistic dollar values. The amount is NOT
+    # a model feature on this pipeline (XGBoost uses feat_* only), so this
+    # is purely cosmetic.
+    raw_amt = row.get("TransactionAmt")
+    if raw_amt is None or (isinstance(raw_amt, float) and np.isnan(raw_amt)):
+        # Stable per-row pseudo-random so the same row always gets the same amount.
+        tx_id = int(row.get("TransactionID", 0)) or 1
+        rng = np.random.default_rng(tx_id)
+        amt = float(np.exp(rng.uniform(np.log(5.0), np.log(5000.0))))
+    else:
+        amt = float(raw_amt)
     out: dict = {
         "transaction_id": int(row.get("TransactionID", 0)),
         "transaction_dt": int(row.get("TransactionDT", 0)),
-        "transaction_amt": float(row.get("TransactionAmt", 0.0)),
+        "transaction_amt": round(amt, 2),
         "product_cd": "W",
     }
     # Optional well-known fields.
@@ -88,6 +102,8 @@ def _row_to_request(row: pd.Series) -> dict:
         try:
             out[col] = float(v)
         except (TypeError, ValueError):
+            # Non-numeric values (strings, dates) -- the predictor expects
+            # everything pre-encoded, so we drop these silently.
             continue
     return out
 
