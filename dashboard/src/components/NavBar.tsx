@@ -75,11 +75,11 @@ export function NavBar({ wsStatus }: { wsStatus: "connecting" | "open" | "closed
         <div className="flex items-center gap-2">
           <StatusPill label={wsLabel(wsStatus)} tone={wsTone(wsStatus)} />
           <StatusPill
-            label={health?.model_loaded ? "Model" : "No model"}
+            label={health?.model_loaded ? "Detection engine" : "Initializing"}
             tone={health?.model_loaded ? "ok" : "warn"}
           />
           <StatusPill
-            label={health?.kafka_connected ? "Kafka" : "Buffer"}
+            label={health?.kafka_connected ? "Event stream" : "Standalone"}
             tone={health?.kafka_connected ? "ok" : "neutral"}
           />
         </div>

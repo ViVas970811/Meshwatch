@@ -45,23 +45,24 @@ export function NetworkPage() {
   return (
     <div className="grid gap-6">
       <header>
-        <div className="text-xs uppercase tracking-widest text-ink-400">Network view</div>
-        <h1 className="text-2xl font-semibold">Fraud network</h1>
-        <p className="text-sm text-ink-300">
-          Force-directed view of card ↔ entity sharing. Click a node to focus; search to filter.
+        <div className="kicker">Network analysis</div>
+        <h1 className="page-title mt-1">Fraud network</h1>
+        <p className="mt-1.5 page-sub">
+          Connections between accounts, devices, and merchants. Click any node to explore;
+          search to focus.
         </p>
       </header>
 
       <section className="grid gap-4 lg:grid-cols-[2fr_1fr]">
         <Card>
           <CardHeader
-            title="Card-Entity sharing graph"
-            subtitle={`${filtered.nodes.length} nodes · ${filtered.links.length} edges`}
+            title="Shared connections"
+            subtitle={`${filtered.nodes.length} entities · ${filtered.links.length} relationships`}
             right={
               <input
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="search id…"
+                placeholder="Search by ID or label…"
                 className="rounded-md bg-ink-900 px-3 py-1.5 text-xs ring-1 ring-ink-700 placeholder:text-ink-500 focus:outline-none focus:ring-accent"
               />
             }

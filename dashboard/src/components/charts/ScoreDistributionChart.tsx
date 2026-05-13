@@ -17,12 +17,15 @@ export function ScoreDistributionChart({ predictions, bins = 20 }: Props) {
   return (
     <Card>
       <CardHeader
-        title="Score distribution"
-        subtitle={`Probability density across ${predictions.length} recent predictions`}
+        title="Risk score distribution"
+        subtitle={`Across the last ${predictions.length} scored transactions`}
       />
       <CardBody>
         {predictions.length === 0 ? (
-          <Empty title="No predictions yet" hint="Send a request to /api/v1/predict to populate." />
+          <Empty
+            title="No data yet"
+            hint="Score distribution will appear here once transactions are processed."
+          />
         ) : (
           <div className="h-56">
             <ResponsiveContainer width="100%" height="100%">

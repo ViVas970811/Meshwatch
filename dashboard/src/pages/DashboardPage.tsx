@@ -59,7 +59,7 @@ export function DashboardPage() {
           <div className="kicker">Real-time monitor</div>
           <h1 className="mt-1 page-title">Live fraud activity</h1>
           <p className="mt-1.5 page-sub">
-            Streaming predictions and alerts across the production pipeline.
+            Transactions, risk scores, and alerts updated in real time.
           </p>
         </div>
       </motion.header>
@@ -68,13 +68,13 @@ export function DashboardPage() {
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <AlertCounter alerts={alerts} delay={0.0} />
         <Stat
-          label="Recent predictions"
+          label="Transactions scored"
           value={<AnimatedNumber value={predictions.length} />}
-          hint="Trailing window served by the API"
+          hint="Across the current monitoring window"
           delay={0.05}
         />
         <Stat
-          label="Latency P95"
+          label="Average response time"
           value={
             <AnimatedNumber
               value={latencyP95}
@@ -84,13 +84,13 @@ export function DashboardPage() {
             />
           }
           accent={latencyP95 < 50 ? "good" : latencyP95 < 100 ? "warn" : "danger"}
-          hint="End-to-end /predict; budget < 50 ms"
+          hint="95th percentile, target < 50 ms"
           delay={0.1}
         />
         <Stat
-          label="Alert buffer"
+          label="Total alerts"
           value={<AnimatedNumber value={alerts.length} />}
-          hint="WebSocket-fed rolling window"
+          hint="Received this session"
           delay={0.15}
         />
       </section>

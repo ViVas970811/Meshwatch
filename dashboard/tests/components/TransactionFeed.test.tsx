@@ -32,7 +32,7 @@ describe("TransactionFeed", () => {
         <TransactionFeed alerts={[]} />
       </MemoryRouter>,
     );
-    expect(screen.getByText(/Waiting for alerts/i)).toBeInTheDocument();
+    expect(screen.getByText(/No active alerts/i)).toBeInTheDocument();
   });
 
   it("renders rows for each alert with risk badge + amount", () => {

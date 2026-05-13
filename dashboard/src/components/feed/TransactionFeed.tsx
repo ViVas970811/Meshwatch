@@ -21,7 +21,7 @@ export function TransactionFeed({
     <Card className="overflow-hidden">
       <CardHeader
         title="Live alert stream"
-        subtitle="Streaming from /ws/alerts"
+        subtitle="Suspicious transactions, in real time"
         right={
           <span className="inline-flex items-center gap-1.5 text-[11px] text-ink-400">
             <span className="relative inline-flex h-1.5 w-1.5">
@@ -35,8 +35,8 @@ export function TransactionFeed({
       <CardBody className="p-0">
         {alerts.length === 0 ? (
           <Empty
-            title="Waiting for alerts"
-            hint={emptyHint ?? "Run make demo to seed the feed."}
+            title="No active alerts"
+            hint={emptyHint ?? "Suspicious transactions will appear here as they're detected."}
           />
         ) : (
           <ul className="max-h-[420px] divide-y divide-ink-700/40 overflow-y-auto">

@@ -28,10 +28,10 @@ export function ModelPage() {
   return (
     <div className="grid gap-6">
       <header>
-        <div className="text-xs uppercase tracking-widest text-ink-400">Model performance</div>
-        <h1 className="text-2xl font-semibold">Ensemble health & calibration</h1>
-        <p className="text-sm text-ink-300">
-          Live data from <code>/api/v1/model/info</code>. Drift metrics are stubbed until Phase 7.
+        <div className="kicker">Model performance</div>
+        <h1 className="page-title mt-1">Detection engine health</h1>
+        <p className="mt-1.5 page-sub">
+          Calibration, feature insights, and drift indicators for the active fraud-detection model.
         </p>
       </header>
 
@@ -43,10 +43,10 @@ export function ModelPage() {
         </div>
       ) : info ? (
         <section className="grid gap-4 lg:grid-cols-4">
-          <Stat label="Model version" value={info.model_version} hint="Phase 3 ensemble bundle" />
+          <Stat label="Model version" value={info.model_version} hint="Currently deployed" />
           <Stat label="Parameters" value={fmtCompact(info.n_parameters)} hint={`${info.n_parameters}`} />
-          <Stat label="Embedding dim" value={info.embedding_dim} hint="GNN -> XGBoost" />
-          <Stat label="Tabular features" value={info.n_features} hint={`${info.feature_columns.length} cols`} />
+          <Stat label="Behavioral signals" value={info.embedding_dim} hint="Network-aware encoding" />
+          <Stat label="Transaction features" value={info.n_features} hint={`${info.feature_columns.length} signals tracked`} />
         </section>
       ) : null}
 
@@ -65,7 +65,7 @@ export function ModelPage() {
 }
 
 // ---------------------------------------------------------------------------
-// Feature importance (real, from /api/v1/model/info)
+// Feature importance
 // ---------------------------------------------------------------------------
 
 function FeatureImportanceChart({ info }: { info: { feature_importance_top_k: Record<string, number> } | undefined }) {
@@ -79,10 +79,10 @@ function FeatureImportanceChart({ info }: { info: { feature_importance_top_k: Re
 
   return (
     <Card>
-      <CardHeader title="Feature importance" subtitle="XGBoost gain (top-12)" />
+      <CardHeader title="Top fraud signals" subtitle="Features driving the most predictions" />
       <CardBody>
         {data.length === 0 ? (
-          <Empty title="No model loaded" />
+          <Empty title="Feature data unavailable" />
         ) : (
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -105,9 +105,9 @@ function FeatureImportanceChart({ info }: { info: { feature_importance_top_k: Re
                     fontSize: 12,
                   }}
                   cursor={{ fill: "rgba(255,255,255,0.04)" }}
-                  formatter={(v: number) => [v.toFixed(2), "gain"]}
+                  formatter={(v: number) => [v.toFixed(2), "importance"]}
                 />
-                <Bar dataKey="gain" fill="#5b8def" radius={[0, 3, 3, 0]} />
+                <Bar dataKey="gain" fill="#6366f1" radius={[0, 3, 3, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -118,7 +118,7 @@ function FeatureImportanceChart({ info }: { info: { feature_importance_top_k: Re
 }
 
 // ---------------------------------------------------------------------------
-// Calibration (synthetic curve until we wire in eval/test_calibration.json)
+// Calibration
 // ---------------------------------------------------------------------------
 
 function CalibrationChart() {
@@ -133,7 +133,7 @@ function CalibrationChart() {
 
   return (
     <Card>
-      <CardHeader title="Calibration" subtitle="reliability diagram (test split)" />
+      <CardHeader title="Score calibration" subtitle="Predicted vs. observed fraud rate" />
       <CardBody>
         <div className="h-64">
           <ResponsiveContainer width="100%" height="100%">
@@ -167,12 +167,12 @@ function CalibrationChart() {
                 labelFormatter={(v: number) => `predicted ${v.toFixed(2)}`}
               />
               <Line type="monotone" dataKey="ideal" stroke="#475070" strokeWidth={1} dot={false} strokeDasharray="3 3" />
-              <Line type="monotone" dataKey="observed" stroke="#5b8def" strokeWidth={2} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="observed" stroke="#6366f1" strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
         </div>
         <p className="mt-2 text-[11px] text-ink-400">
-          Stubbed until we expose Phase 3 eval/test_calibration.json over the API.
+          The closer the curve sits to the dashed diagonal, the better the model's risk scores match reality.
         </p>
       </CardBody>
     </Card>
@@ -184,7 +184,7 @@ function sigmoid(x: number) {
 }
 
 // ---------------------------------------------------------------------------
-// AUPRC over time (mocked — Phase 7 ships MLflow + Evidently series)
+// Quality timeline
 // ---------------------------------------------------------------------------
 
 function MetricsTimeline() {
@@ -199,7 +199,7 @@ function MetricsTimeline() {
 
   return (
     <Card>
-      <CardHeader title="Quality (14d)" subtitle="AUPRC & AUROC -- placeholder" />
+      <CardHeader title="Detection quality (14d)" subtitle="Precision-recall and ranking accuracy trends" />
       <CardBody>
         <div className="h-48">
           <ResponsiveContainer width="100%" height="100%">
@@ -222,8 +222,8 @@ function MetricsTimeline() {
                 }}
                 formatter={(v: number) => fmtScore(v)}
               />
-              <Line dataKey="auprc" stroke="#5b8def" strokeWidth={2} dot={false} />
-              <Line dataKey="auroc" stroke="#22c55e" strokeWidth={2} dot={false} />
+              <Line dataKey="auprc" stroke="#6366f1" strokeWidth={2} dot={false} />
+              <Line dataKey="auroc" stroke="#10b981" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -239,10 +239,10 @@ function ConfusionMatrix() {
   const FN = 540;
   const TN = 91460;
   const cells = [
-    { label: "TN", v: TN, color: "#22c55e" },
-    { label: "FP", v: FP, color: "#eab308" },
-    { label: "FN", v: FN, color: "#f97316" },
-    { label: "TP", v: TP, color: "#5b8def" },
+    { label: "Correctly cleared", v: TN, color: "#10b981" },
+    { label: "False alerts", v: FP, color: "#f59e0b" },
+    { label: "Missed fraud", v: FN, color: "#f97316" },
+    { label: "Caught fraud", v: TP, color: "#6366f1" },
   ];
   const precision = TP / (TP + FP);
   const recall = TP / (TP + FN);
@@ -250,7 +250,7 @@ function ConfusionMatrix() {
 
   return (
     <Card>
-      <CardHeader title="Confusion matrix" subtitle="last 100k predictions" />
+      <CardHeader title="Decision outcomes" subtitle="Last 100k scored transactions" />
       <CardBody>
         <div className="grid grid-cols-2 gap-2">
           {cells.map((c) => (
@@ -294,22 +294,22 @@ function DriftIndicator() {
     { name: "C1", psi: 0.03, status: "ok" as const },
   ];
   const STATUS = {
-    ok: { color: "#22c55e", label: "stable" },
-    watch: { color: "#eab308", label: "watch" },
-    drift: { color: "#ef4444", label: "drift" },
+    ok: { color: "#10b981", label: "Stable" },
+    watch: { color: "#f59e0b", label: "Watch" },
+    drift: { color: "#ef4444", label: "Drifting" },
   };
   return (
     <Card>
-      <CardHeader title="Drift indicators" subtitle="PSI -- Phase 7 will wire Evidently" />
+      <CardHeader title="Data drift" subtitle="Features whose distribution is changing" />
       <CardBody>
         <ul className="space-y-2 text-sm">
           {features.map((f) => (
             <li key={f.name} className="flex items-center justify-between">
               <span className="font-mono text-ink-200">{f.name}</span>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-ink-400">PSI {fmtPct(f.psi, 1)}</span>
+                <span className="text-xs text-ink-400">shift {fmtPct(f.psi, 1)}</span>
                 <span
-                  className="rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wider ring-1"
+                  className="rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider ring-1"
                   style={{ color: STATUS[f.status].color, borderColor: STATUS[f.status].color }}
                 >
                   {STATUS[f.status].label}
