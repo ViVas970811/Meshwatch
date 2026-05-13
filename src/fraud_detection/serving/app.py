@@ -34,8 +34,10 @@ from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 
+from fraud_detection.monitoring import MonitoringState, monitoring_metrics, report_to_html
+from fraud_detection.monitoring import get_state as get_monitoring_state
 from fraud_detection.serving.middleware import RequestTimingMiddleware, metrics
 from fraud_detection.serving.predictor import FraudPredictor, load_predictor
 from fraud_detection.serving.schemas import (
@@ -49,6 +51,7 @@ from fraud_detection.serving.schemas import (
     ModelInfoResponse,
     TransactionRequest,
 )
+from fraud_detection.serving.security import configure_security
 from fraud_detection.streaming.kafka_consumer import FraudAlertConsumer
 from fraud_detection.streaming.kafka_producer import FraudAlertProducer
 from fraud_detection.utils.logging import configure_logging, get_logger
@@ -125,6 +128,11 @@ class AppState:
     recent_predictions: deque[FraudPrediction]
     recent_alerts: deque[FraudAlert]
 
+    # Phase 7 -- monitoring state holder; ``MonitoringState`` owns the
+    # production performance tracker, alert evaluator, and the last drift
+    # report. The same singleton is also reachable from the CLI.
+    monitoring: MonitoringState
+
     def __init__(self) -> None:
         self.predictor = None
         self.producer = None
@@ -136,6 +144,7 @@ class AppState:
         self.agent_compiled = None
         self.recent_predictions = deque(maxlen=200)
         self.recent_alerts = deque(maxlen=200)
+        self.monitoring = get_monitoring_state()
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +159,7 @@ def _load_card_history_store(
     """Build a :class:`CardHistoryStore` populated from raw IEEE-CIS rows.
 
     Reads from the raw CSV (not the standardized processed parquet) so the
-    original integer card1 IDs are preserved -- the predictor's
+    original integer ``card1`` IDs are preserved -- the predictor's
     ``_build_tabular_row`` uses the same raw IDs as keys, so the agent's
     history lookups line up with the transactions being scored.
 
@@ -171,7 +180,6 @@ def _load_card_history_store(
         log.warning("history_store_csv_missing", path=str(p))
         return None
 
-    # Minimal column set keeps the load cheap (~150 MB peak, ~6 s on SSD).
     cols = ["TransactionID", "TransactionDT", "TransactionAmt", "isFraud", "card1", "ProductCD"]
     t0 = time.perf_counter()
     df = pd.read_csv(p, usecols=cols)
@@ -288,10 +296,10 @@ async def lifespan(app: FastAPI):
 
             llm = get_llm(prefer_ollama=True)
 
-            # Load a CardHistoryStore from the processed training data so the
-            # analyze_card_history / analyze_velocity / amount_anomaly_check
-            # tools have real evidence to surface. Falls back to None (tools
-            # will skip gracefully) if the parquet isn't built yet.
+            # Populate a CardHistoryStore from raw IEEE-CIS rows so the
+            # analyze_card_history / analyze_velocity tools have real
+            # evidence to surface. Falls back to None when the CSV is
+            # absent (tools skip gracefully).
             history_store = _load_card_history_store()
 
             state.agent_deps = AgentDeps(
@@ -331,7 +339,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     app = FastAPI(
         title="Meshwatch Fraud Detection",
-        version="v0.6.0-dashboard",
+        version="v1.0.0-release",
         description="Real-time GNN+XGBoost fraud-detection inference API.",
         lifespan=lifespan,
     )
@@ -352,6 +360,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(RequestTimingMiddleware)
+    # Phase 8 -- API-key auth + token-bucket rate limiting. Both are
+    # configured from environment variables so dev keeps no-op behaviour
+    # while prod can lock things down with FRAUD_API_KEYS=key1,key2.
+    configure_security(app)
     _register_routes(app)
     return app
 
@@ -376,9 +388,18 @@ def _register_routes(app: FastAPI) -> None:
         s = _state(request)
         if s.predictor is None:
             raise HTTPException(status_code=503, detail="Model not loaded")
-        result = s.predictor.predict_one(payload)
+        # Route through the shadow lane when a challenger is attached -- the
+        # champion result is identical to a direct ``predict_one`` call,
+        # but the challenger scores in the background.
+        if s.monitoring.shadow is not None and s.monitoring.shadow.enabled:
+            result = s.monitoring.shadow.score(payload)
+        else:
+            result = s.predictor.predict_one(payload)
         metrics.predictions_total.labels(result.risk_level).inc()
         s.recent_predictions.append(result)
+        s.monitoring.performance.record_prediction(
+            result.transaction_id, result.fraud_score, timestamp=result.served_at
+        )
         if result.fraud_score >= s.predictor.threshold and s.producer is not None:
             alert = _to_alert(result, payload)
             s.producer.publish(alert)
@@ -405,6 +426,9 @@ def _register_routes(app: FastAPI) -> None:
         for r, tx in zip(results, payload.transactions, strict=True):
             metrics.predictions_total.labels(r.risk_level).inc()
             s.recent_predictions.append(r)
+            s.monitoring.performance.record_prediction(
+                r.transaction_id, r.fraud_score, timestamp=r.served_at
+            )
             if r.fraud_score >= s.predictor.threshold and s.producer is not None:
                 alert = _to_alert(r, tx)
                 s.producer.publish(alert)
@@ -482,6 +506,132 @@ def _register_routes(app: FastAPI) -> None:
     async def metrics_endpoint() -> Response:
         return Response(content=metrics.render(), media_type=metrics.content_type)
 
+    # ---- Monitoring (Phase 7) ----------------------------------------------
+
+    @app.get("/api/v1/monitoring/drift", tags=["monitoring"])
+    async def drift_endpoint(request: Request) -> dict[str, Any]:
+        s = _state(request)
+        report = s.monitoring.last_drift_report
+        if report is None:
+            return {
+                "status": "no_report",
+                "message": "No drift report has been computed yet. Run `make drift-report`.",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        return report.to_dict()
+
+    @app.get("/api/v1/monitoring/drift.html", response_class=HTMLResponse, tags=["monitoring"])
+    async def drift_html_endpoint(request: Request) -> HTMLResponse:
+        s = _state(request)
+        report = s.monitoring.last_drift_report
+        if report is None:
+            return HTMLResponse(
+                "<!doctype html><meta charset='utf-8'><title>No drift report</title>"
+                "<body style='font-family:system-ui;padding:24px;'>"
+                "<h1>No drift report</h1>"
+                "<p>Run <code>make drift-report</code> to generate one.</p>"
+                "</body>",
+                status_code=200,
+            )
+        return HTMLResponse(report_to_html(report))
+
+    @app.get("/api/v1/monitoring/performance", tags=["monitoring"])
+    async def performance_endpoint(
+        request: Request, window_minutes: int | None = None
+    ) -> dict[str, Any]:
+        from datetime import timedelta as _td
+
+        s = _state(request)
+        window = _td(minutes=int(window_minutes)) if window_minutes else None
+        snap = s.monitoring.performance.snapshot(window=window)
+        monitoring_metrics.update_performance(snap)
+        return snap.to_dict()
+
+    @app.post("/api/v1/monitoring/label", tags=["monitoring"])
+    async def label_endpoint(
+        request: Request,
+        payload: dict[str, Any] = Body(...),  # noqa: B008
+    ) -> dict[str, Any]:
+        """Attach a ground-truth label to a previously-scored transaction.
+
+        Expected body: ``{"transaction_id": "<id>", "label": 0 | 1}``.
+        """
+        s = _state(request)
+        tx_id = payload.get("transaction_id")
+        label = payload.get("label")
+        if tx_id is None or label is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Request body must include 'transaction_id' and 'label'.",
+            )
+        try:
+            label_int = int(label)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400, detail="'label' must be coercible to int (0 or 1)."
+            ) from exc
+        if label_int not in (0, 1):
+            raise HTTPException(status_code=400, detail="'label' must be 0 or 1.")
+        found = s.monitoring.performance.record_label(tx_id, label_int)
+        # Refresh the Prometheus gauges so the dashboard surfaces the change.
+        snap = s.monitoring.performance.snapshot()
+        monitoring_metrics.update_performance(snap)
+        return {"transaction_id": tx_id, "label": label_int, "found": found}
+
+    @app.get("/api/v1/monitoring/alerts", tags=["monitoring"])
+    async def alerts_endpoint(request: Request) -> dict[str, Any]:
+        s = _state(request)
+        drift = s.monitoring.last_drift_report
+        snap = s.monitoring.performance.snapshot()
+        n_predictions = len(s.recent_predictions)
+        n_alerts = sum(
+            1 for p in s.recent_predictions if p.fraud_score >= s.monitoring.performance.threshold
+        )
+        production_fraud_rate = n_alerts / n_predictions if n_predictions > 0 else 0.0
+        shadow_summary = s.monitoring.shadow.summary() if s.monitoring.shadow is not None else None
+        ctx: dict[str, Any] = {
+            "model_loaded": s.predictor is not None,
+            "drift_overall": float(drift.overall_psi) if drift is not None else 0.0,
+            "drift_severe": int(drift.n_severe) if drift is not None else 0,
+            "performance": snap,
+            "production_fraud_rate": production_fraud_rate,
+            "reference_fraud_rate": s.monitoring.reference_fraud_rate,
+            "shadow": shadow_summary,
+            "latency_p95": 0.0,
+            "error_rate": 0.0,
+        }
+        fired = s.monitoring.alerts.evaluate(ctx)
+        return {
+            "n_active": len(fired),
+            "alerts": [a.to_dict() for a in fired],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @app.get("/api/v1/monitoring/shadow", tags=["monitoring"])
+    async def shadow_summary_endpoint(request: Request) -> dict[str, Any]:
+        s = _state(request)
+        if s.monitoring.shadow is None:
+            return {
+                "status": "disabled",
+                "message": "Shadow deployment not configured.",
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+            }
+        summary = s.monitoring.shadow.summary()
+        monitoring_metrics.update_shadow_summary(summary)
+        return summary.to_dict()
+
+    @app.get("/api/v1/monitoring/shadow/recent", tags=["monitoring"])
+    async def shadow_recent_endpoint(request: Request, limit: int = 50) -> dict[str, Any]:
+        s = _state(request)
+        if s.monitoring.shadow is None:
+            return {"status": "disabled", "decisions": []}
+        decisions = s.monitoring.shadow.recent_decisions(limit=max(1, min(int(limit), 500)))
+        return {
+            "n": len(decisions),
+            "decisions": [d.to_dict() for d in decisions],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     # ---- Investigate (Phase 5) ----------------------------------------------
 
     @app.post("/api/v1/investigate", tags=["investigate"])
@@ -518,7 +668,27 @@ def _register_routes(app: FastAPI) -> None:
             request=request_payload,
             alert_id=payload.alert_id,
         )
-        report = investigate(state, deps=s.agent_deps, compiled=s.agent_compiled)
+        t_agent = time.perf_counter()
+        agent_status = "ok"
+        try:
+            report = investigate(state, deps=s.agent_deps, compiled=s.agent_compiled)
+        except Exception:
+            agent_status = "error"
+            monitoring_metrics.record_agent_run(
+                risk_level=str(prediction.risk_level),
+                latency_seconds=time.perf_counter() - t_agent,
+                status=agent_status,
+            )
+            raise
+        tool_calls = [
+            (str(c.get("name", "?")), str(c.get("status", "ok"))) for c in report.tool_calls
+        ]
+        monitoring_metrics.record_agent_run(
+            risk_level=str(report.risk_level),
+            latency_seconds=time.perf_counter() - t_agent,
+            status=agent_status,
+            tool_calls=tool_calls,
+        )
         metrics.predictions_total.labels(report.risk_level).inc()
         return report.model_dump(mode="json")
 
